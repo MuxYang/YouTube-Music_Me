@@ -14,9 +14,9 @@
     "dev": "electron . --dev",
     "test": "node --test",
     "pack": "electron-builder --dir",
-    "dist:win": "electron-builder --win nsis portable",
-    "dist:linux": "electron-builder --linux AppImage deb rpm tar.gz",
-    "dist:mac": "electron-builder --mac dmg zip --universal"
+    "dist:win": "electron-builder --win nsis portable --publish never",
+    "dist:linux": "electron-builder --linux AppImage deb rpm tar.gz --publish never",
+    "dist:mac": "electron-builder --mac dmg zip --universal --publish never"
   },
   "devDependencies": {
     "electron": "^43.1.0",
