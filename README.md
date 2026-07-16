@@ -79,6 +79,11 @@ npm run dist:linux
 
 Build artifacts are written to `release/`. Linux tray support depends on the desktop environment providing StatusNotifier/AppIndicator support.
 
+## Maintenance warning
+
+> [!WARNING]
+> A substantial portion of this codebase was generated or rewritten with AI assistance. It may contain inconsistent abstractions, hidden coupling, redundant logic, insufficiently documented assumptions, or behavior that is difficult to reason about and maintain. Review the implementation carefully and run comprehensive tests before reusing, extending, or deploying it in another project.
+
 ## Disclaimer
 
 YouTube Music Me is an independent, unofficial open-source project. It is not affiliated with, endorsed by, sponsored by, or otherwise associated with YouTube, Google, LRCLIB, NetEase Cloud Music, or DeepL. YouTube, YouTube Music, Google, and other product names and trademarks belong to their respective owners.

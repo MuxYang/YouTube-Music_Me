@@ -79,6 +79,11 @@ npm run dist:linux
 
 构建产物输出到 `release/`。Linux 托盘功能依赖桌面环境提供 StatusNotifier/AppIndicator 支持。
 
+## 维护性警告
+
+> [!WARNING]
+> 本项目的大部分代码由 AI 辅助生成或重写，可能存在抽象不一致、隐藏耦合、冗余逻辑、缺少文档说明的隐含假设，以及难以理解和维护的行为。在将代码用于其他项目、继续扩展或部署之前，请完整审查实现并进行充分测试。
+
 ## 免责声明
 
 YouTube Music Me 是独立开发的非官方开源项目，与 YouTube、Google、LRCLIB、网易云音乐或 DeepL 没有隶属、授权、赞助或背书关系。YouTube、YouTube Music、Google 及其他产品名称和商标均归其各自权利人所有。
