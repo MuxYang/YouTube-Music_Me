@@ -1,52 +1,86 @@
 # YouTube Music Me
 
-面向 Windows 和 Linux 的轻量 YouTube Music 桌面壳，直接使用 Electron 的 Chromium 内核加载官方 PWA。
+[简体中文](README.zh.md)
 
-## 当前适配
+An unofficial Electron desktop client for YouTube Music on Windows and Linux. It loads the official YouTube Music web app and adds native desktop integration, synchronized lyrics, translation, and configurable window behavior.
 
-- 启动使用官方 YouTube Music SVG 标识的纯黑 Splash：图标渐显、`Music` 字标向右展开、Material 加载圈随后出现
-- PWA 基础界面加载完成或达到 7 秒上限后，Splash 整体渐隐；若页面尚未出现，则以纯黑 Material 加载层继续承接，避免白屏和闪切
-- 隐藏或退出前仍截取当前页面布局，并保存页面 URL；下次启动后台加载上次页面
-- 真实搜索栏所在的导航区可作为无边框窗口标题栏拖动
-- 账户入口位于窗口按钮左侧，右上角提供最小化、最大化/还原和关闭
-- Google 登录使用带系统边框的独立窗口，关闭后返回并刷新主页面会话
-- 隐藏网页原生滚动条，使用避开标题栏的细滚动条并在停止滚动后自动淡出
-- 使用 Material 风格的关闭确认框和网页右键菜单，不调用 Chromium 默认菜单
-- 设置页和账号菜单中的服务条款、隐私政策使用系统默认浏览器打开
-- 设置页新增“其他”分类，可分别启用全局磨砂透明、界面过渡动画和 LRCLIB 同步歌词
-- 透明模式覆盖设置、账号菜单、搜索建议、播放器底栏和当前播放队列项，建议内容由父容器统一承载磨砂背景
-- 设置分类切换时左侧选中背景纵向滑动，右侧旧内容退出后新内容立即进入；分隔线保持固定，每个面板只执行一次动画
-- 设置页隐藏原生横向和竖向滚动条，仍可使用滚轮正常滚动
-- 音量图标支持悬浮滚轮调节，以底栏 0–100 滑块为准，每次增减 5
-- 同步歌词默认关闭；启用后查询 LRCLIB；额外开启网易云音乐后优先查询网易云，再回退到 LRCLIB；音乐视频仍无结果时使用 YouTube CC 时间轴
-- 歌词查询会拆分双语标题并识别 `Artist - Song`，按标题、艺人、专辑和时长对候选进行确定性评分；同一歌曲与设置组合只保留一个在途请求
-- 歌词右下角提供翻译按钮，通过 Google Translate Web API 翻译为 YouTube Music 当前语言，并可一键切回原文
-- 歌词服务的无结果、网络错误和加载中状态分别收敛，不会因页面更新重复请求
-- 语言选择后提供延迟刷新兜底，避免偏好已保存但页面语言未更新
-- Windows SMTC/Chromium Media Session 按当前视频 ID 推送歌曲/艺人或视频标题/频道名称，并提供独立于上一首的时间轴
-- 默认关闭到系统托盘；托盘菜单可切换关闭行为并可彻底退出
-- 保留独立持久化会话，登录状态、PWA 存储和缓存不会随窗口关闭丢失
+**App type:** Unofficial desktop client built with Electron and `WebContentsView`.
 
-## 开发
+## Features
+
+### Desktop integration
+
+- Windows SMTC and Chromium Media Session metadata for songs and music videos, including title, artist or channel, artwork, playback state, and a track-relative timeline.
+- Frameless main window with draggable navigation, native minimize, maximize/restore, and close controls.
+- Configurable close behavior: ask every time, minimize to the system tray, or exit the app.
+- Persistent YouTube Music session, PWA storage, cache, last URL, and window bounds.
+- Separate Google sign-in window with the system frame and a session refresh after sign-in.
+- Hover-wheel volume control in 5% increments.
+- Custom thin scrollbar, Material-style context menu, and close confirmation dialog.
+
+### Lyrics and translation
+
+- Synchronized lyrics are disabled by default and are only requested after explicit consent.
+- For regular tracks, NetEase Cloud Music is preferred when enabled, with LRCLIB as the fallback.
+- For music videos, YouTube CC is preferred before the configured lyrics providers.
+- Deterministic matching uses title and artist aliases, album, duration, bilingual titles, and `Artist - Song` video titles.
+- Natural track changes clear the previous timeline and automatically trigger a fresh lyrics lookup.
+- Lyrics can be translated with Google Translate or DeepL API Free; DeepL keys are encrypted with the operating system.
+- Non-Simplified-Chinese users can optionally use aligned NetEase Chinese lyrics as the translation input, with the original lyrics as a fallback.
+- A complete song is sent in one translation request whenever the provider limit allows it. Oversized input is split only at complete lyric-line boundaries.
+
+### Interface
+
+- Black startup sequence using the official YouTube Music platform logo, followed by a Material loading guard until the web app is ready.
+- Custom `Other` settings category for transparency, animations, lyrics providers, translation, and close behavior.
+- Optional translucent surfaces for settings, account menus, search suggestions, the player bar, and the active queue item.
+- Custom YouTube-style setting pickers that close on settings-page scrolling.
+- Injected interface translations are stored in `src/i18n/<lang>.json` and currently include `en-us`, `zh-cn`, and `zh-tw`.
+- Changing the YouTube Music language or using a reload command restarts the app so the web interface and injected controls use the same locale.
+- Terms and privacy links open in the system browser.
+
+## Third-party services
+
+Optional features may communicate with the following services after the corresponding setting and consent prompt are accepted:
+
+- **LRCLIB:** receives track title, artist, album, and duration for synchronized-lyrics searches.
+- **NetEase Cloud Music:** receives track search metadata and may provide original and translated lyrics.
+- **Google Translate or DeepL:** receives lyric text when translation is requested. DeepL requires the user's own API Free key.
+
+The repository does not bundle songs, videos, or lyrics. Availability and results depend on the upstream services.
+
+## Development
 
 ```powershell
 npm install
 npm start
 ```
 
-## 打包
+Run the tests with:
 
-Windows：
+```powershell
+npm test
+```
+
+## Packaging
+
+Windows:
 
 ```powershell
 npm run dist:win
 ```
 
-Linux（请在 Linux 环境执行）：
+Linux (run in a Linux environment):
 
 ```bash
 npm ci
 npm run dist:linux
 ```
 
-构建产物输出至 `release/`。Linux 托盘显示依赖桌面环境提供 StatusNotifier/AppIndicator 支持。
+Build artifacts are written to `release/`. Linux tray support depends on the desktop environment providing StatusNotifier/AppIndicator support.
+
+## Disclaimer
+
+YouTube Music Me is an independent, unofficial open-source project. It is not affiliated with, endorsed by, sponsored by, or otherwise associated with YouTube, Google, LRCLIB, NetEase Cloud Music, or DeepL. YouTube, YouTube Music, Google, and other product names and trademarks belong to their respective owners.
+
+The app relies on third-party web pages and services that may change, limit access, or stop working without notice. Users are responsible for complying with applicable laws and the terms and privacy policies of every service they enable. The project is provided as-is, without warranty of service availability, content accuracy, or fitness for a particular purpose.

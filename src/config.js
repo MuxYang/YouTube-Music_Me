@@ -13,7 +13,9 @@ const DEFAULT_SETTINGS = Object.freeze({
   lyrics: {
     autoTranslate: false,
     lrclibEnabled: false,
-    neteaseEnabled: false
+    neteaseEnabled: false,
+    neteaseTranslationSource: false,
+    translationProvider: 'google'
   },
   windowBounds: {
     width: 1280,
@@ -46,10 +48,15 @@ function normalizeSettings(value = {}) {
   const closeAction = ['ask', 'tray', 'quit'].includes(requestedCloseAction)
     ? requestedCloseAction
     : value.closeToTray === false ? 'ask' : 'tray';
+  const lrclibEnabled = sourceLyrics.lrclibEnabled === true;
+  const neteaseEnabled = lrclibEnabled && sourceLyrics.neteaseEnabled === true;
   const lyrics = {
-    autoTranslate: sourceLyrics.autoTranslate === true,
-    lrclibEnabled: sourceLyrics.lrclibEnabled === true,
-    neteaseEnabled: sourceLyrics.neteaseEnabled === true
+    autoTranslate: lrclibEnabled && sourceLyrics.autoTranslate === true,
+    lrclibEnabled,
+    neteaseEnabled,
+    neteaseTranslationSource: neteaseEnabled
+      && sourceLyrics.neteaseTranslationSource === true,
+    translationProvider: sourceLyrics.translationProvider === 'deepl' ? 'deepl' : 'google'
   };
 
   const normalized = {

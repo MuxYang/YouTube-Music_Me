@@ -18,7 +18,9 @@ test('normalizes window bounds and keeps coordinates', () => {
     lyrics: {
       autoTranslate: false,
       lrclibEnabled: false,
-      neteaseEnabled: false
+      neteaseEnabled: false,
+      neteaseTranslationSource: false,
+      translationProvider: 'google'
     },
     windowBounds: { x: 12, y: 46, width: 880, height: 600 }
   });
@@ -51,24 +53,60 @@ test('defaults LRCLIB lyrics off and only accepts an explicit boolean', () => {
   assert.equal(normalizeSettings({ lyrics: { lrclibEnabled: 1 } }).lyrics.lrclibEnabled, false);
 });
 
+test('disables dependent lyrics options when their providers are disabled', () => {
+  const withoutSync = normalizeSettings({
+    lyrics: {
+      autoTranslate: true,
+      neteaseEnabled: true,
+      neteaseTranslationSource: true
+    }
+  }).lyrics;
+  assert.equal(withoutSync.autoTranslate, false);
+  assert.equal(withoutSync.neteaseEnabled, false);
+  assert.equal(withoutSync.neteaseTranslationSource, false);
+
+  const withoutNetease = normalizeSettings({
+    lyrics: { lrclibEnabled: true, neteaseTranslationSource: true }
+  }).lyrics;
+  assert.equal(withoutNetease.neteaseTranslationSource, false);
+});
+
 test('keeps every lyrics switch enumerable during settings persistence', () => {
   const lyrics = normalizeSettings({}).lyrics;
   assert.deepEqual(Object.keys(lyrics), [
     'autoTranslate',
     'lrclibEnabled',
-    'neteaseEnabled'
+    'neteaseEnabled',
+    'neteaseTranslationSource',
+    'translationProvider'
   ]);
 });
 
 test('migrates close behavior and normalizes the NetEase lyrics switch', () => {
   const settings = normalizeSettings({
     closeAction: 'quit',
-    lyrics: { autoTranslate: true, lrclibEnabled: true, neteaseEnabled: true }
+    lyrics: {
+      autoTranslate: true,
+      lrclibEnabled: true,
+      neteaseEnabled: true,
+      neteaseTranslationSource: true
+    }
   });
   assert.equal(settings.closeAction, 'quit');
   assert.equal(settings.closeToTray, false);
   assert.equal(settings.lyrics.neteaseEnabled, true);
+  assert.equal(settings.lyrics.neteaseTranslationSource, true);
   assert.equal(settings.lyrics.autoTranslate, true);
+});
+
+test('normalizes the lyrics translation provider', () => {
+  assert.equal(normalizeSettings({}).lyrics.translationProvider, 'google');
+  assert.equal(normalizeSettings({
+    lyrics: { translationProvider: 'deepl' }
+  }).lyrics.translationProvider, 'deepl');
+  assert.equal(normalizeSettings({
+    lyrics: { translationProvider: 'unknown' }
+  }).lyrics.translationProvider, 'google');
 });
 
 test('allows only HTTPS YouTube and Google application URLs', () => {

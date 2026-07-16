@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, net, screen, session, shell, Tray, WebContentsView } = require('electron');
+const { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, net, safeStorage, screen, session, shell, Tray, WebContentsView } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
@@ -22,6 +22,19 @@ const {
   normalizeTranslationLanguage
 } = require('./lyrics');
 const { createLyricsService } = require('./lyrics-service');
+const {
+  getAppStrings,
+  getDeepLConfigStrings,
+  parseYouTubeLanguagePreference
+} = require('./i18n');
+const {
+  createDeepLLyricsPayloads,
+  createGoogleLyricsBatches,
+  joinGoogleLyricsLines,
+  normalizeDeepLAuthKey,
+  normalizeTranslationProvider,
+  splitGoogleLyricsText
+} = require('./translation');
 
 app.commandLine.appendSwitch(
   'disable-features',
@@ -33,11 +46,15 @@ const iconPath = path.join(__dirname, 'assets', 'icon.png');
 const splashPath = path.join(__dirname, 'renderer', 'splash.html');
 const musicPreloadPath = path.join(__dirname, 'preload', 'music.js');
 const splashPreloadPath = path.join(__dirname, 'preload', 'splash.js');
+const deeplConfigPreloadPath = path.join(__dirname, 'preload', 'deepl-config.js');
+const deeplConfigPath = path.join(__dirname, 'renderer', 'deepl-config.html');
 const titlebarCssPath = path.join(__dirname, 'renderer', 'titlebar.css');
 
 let mainWindow = null;
 let musicView = null;
 let authWindow = null;
+let deeplConfigWindow = null;
+let deeplConfigPromise = null;
 let tray = null;
 let isQuitting = false;
 let cacheCaptureTimer = null;
@@ -51,6 +68,9 @@ let musicInterfaceReady = false;
 let musicLoadFailed = false;
 let settings = DEFAULT_SETTINGS;
 let electronUserAgent = '';
+let youtubeLanguagePreference = '';
+let restartRequested = false;
+let deeplAuthKey = '';
 const lyricsTranslationCache = new Map();
 let desktopLyricsState = null;
 
@@ -72,6 +92,32 @@ function writeSettings() {
   fs.writeFileSync(getUserDataPath('settings.json'), JSON.stringify(settings, null, 2));
 }
 
+function loadDeepLAuthKey() {
+  deeplAuthKey = '';
+  try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      return;
+    }
+    const encrypted = fs.readFileSync(getUserDataPath('deepl-auth-key.bin'));
+    deeplAuthKey = normalizeDeepLAuthKey(safeStorage.decryptString(encrypted));
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.warn('Unable to read the encrypted DeepL API key:', error.message);
+    }
+  }
+}
+
+function storeDeepLAuthKey(authKey) {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Secure credential storage is unavailable on this system.');
+  }
+  const normalized = normalizeDeepLAuthKey(authKey);
+  const encrypted = safeStorage.encryptString(normalized);
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(getUserDataPath('deepl-auth-key.bin'), encrypted, { mode: 0o600 });
+  deeplAuthKey = normalized;
+}
+
 function openInSystemBrowser(url) {
   shell.openExternal(url).catch((error) => {
     console.warn('Unable to open the external URL:', error.message);
@@ -83,8 +129,11 @@ function getAppearanceSettings() {
     ...settings.appearance,
     autoTranslateLyrics: settings.lyrics.autoTranslate,
     closeAction: settings.closeAction,
+    deeplConfigured: Boolean(deeplAuthKey),
     lrclibLyrics: settings.lyrics.lrclibEnabled,
-    neteaseLyrics: settings.lyrics.neteaseEnabled
+    lyricsTranslationProvider: settings.lyrics.translationProvider,
+    neteaseLyrics: settings.lyrics.neteaseEnabled,
+    neteaseTranslationSource: settings.lyrics.neteaseTranslationSource
   };
 }
 
@@ -137,6 +186,19 @@ function nextAutoTranslateEnabled(currentSettings, patch = {}) {
     ? patch.autoTranslateLyrics
     : currentSettings.lyrics.autoTranslate;
   return syncEnabled && autoTranslate;
+}
+
+function nextNeteaseTranslationSourceEnabled(currentSettings, patch = {}) {
+  const syncEnabled = typeof patch.lrclibLyrics === 'boolean'
+    ? patch.lrclibLyrics
+    : currentSettings.lyrics.lrclibEnabled;
+  const neteaseEnabled = typeof patch.neteaseLyrics === 'boolean'
+    ? patch.neteaseLyrics
+    : currentSettings.lyrics.neteaseEnabled;
+  const sourceEnabled = typeof patch.neteaseTranslationSource === 'boolean'
+    ? patch.neteaseTranslationSource
+    : currentSettings.lyrics.neteaseTranslationSource;
+  return syncEnabled && neteaseEnabled && sourceEnabled;
 }
 
 function setBoundedCache(map, key, value, limit) {
@@ -232,45 +294,60 @@ async function translateGoogleText(text, targetLanguage) {
 }
 
 async function translateGoogleBatch(lines, targetLanguage) {
-  const response = await translateGoogleText(lines.join('\n'), targetLanguage);
-  const translatedLines = response.text.split('\n');
-  if (translatedLines.length === lines.length) {
-    return { detectedLanguage: response.detectedLanguage, lines: translatedLines };
-  }
-  if (lines.length === 1) {
-    return { detectedLanguage: response.detectedLanguage, lines: [response.text.trim()] };
-  }
-  const middle = Math.ceil(lines.length / 2);
-  const [left, right] = await Promise.all([
-    translateGoogleBatch(lines.slice(0, middle), targetLanguage),
-    translateGoogleBatch(lines.slice(middle), targetLanguage)
-  ]);
+  const response = await translateGoogleText(joinGoogleLyricsLines(lines), targetLanguage);
   return {
-    detectedLanguage: response.detectedLanguage
-      || left.detectedLanguage
-      || right.detectedLanguage,
-    lines: [...left.lines, ...right.lines]
+    detectedLanguage: response.detectedLanguage,
+    lines: splitGoogleLyricsText(response.text, lines.length)
   };
 }
 
-function createTranslationBatches(lines) {
-  const batches = [];
-  let current = [];
-  let characters = 0;
-  for (const line of lines) {
-    const additionalCharacters = line.length + (current.length ? 1 : 0);
-    if (current.length && characters + additionalCharacters > 4500) {
-      batches.push(current);
-      current = [];
-      characters = 0;
+async function requestDeepL(pathname, authKey, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 15000);
+  try {
+    const response = await net.fetch(`https://api-free.deepl.com${pathname}`, {
+      body: options.body,
+      headers: {
+        Accept: 'application/json',
+        Authorization: `DeepL-Auth-Key ${authKey}`,
+        'Content-Type': 'application/json',
+        'User-Agent': electronUserAgent || 'YouTube Music Me/0.1.0'
+      },
+      method: options.method || 'GET',
+      signal: controller.signal
+    });
+    const responseBody = await response.text();
+    if (!response.ok) {
+      throw new Error(`DeepL returned HTTP ${response.status}`);
     }
-    current.push(line);
-    characters += additionalCharacters;
+    if (!responseBody || Buffer.byteLength(responseBody, 'utf8') > 2 * 1024 * 1024) {
+      throw new Error('DeepL returned an empty or oversized response.');
+    }
+    return JSON.parse(responseBody);
+  } finally {
+    clearTimeout(timeout);
   }
-  if (current.length) {
-    batches.push(current);
+}
+
+async function validateDeepLAuthKey(authKey) {
+  await requestDeepL('/v2/usage', authKey, { timeoutMs: 10000 });
+}
+
+async function translateDeepLPayload(payload, authKey) {
+  const value = await requestDeepL('/v2/translate', authKey, {
+    body: JSON.stringify(payload),
+    method: 'POST'
+  });
+  const translations = Array.isArray(value?.translations) ? value.translations : [];
+  if (translations.length !== payload.text.length
+    || translations.some((translation) => typeof translation?.text !== 'string')) {
+    throw new Error('DeepL did not preserve the lyrics timeline.');
   }
-  return batches;
+  return {
+    detectedLanguage: translations.find((translation) => translation.detected_source_language)
+      ?.detected_source_language || '',
+    lines: translations.map((translation) => translation.text.trim())
+  };
 }
 
 async function translateLyricsLines(payload = {}) {
@@ -283,19 +360,26 @@ async function translateLyricsLines(payload = {}) {
     throw new Error('Invalid lyrics translation request.');
   }
 
-  const cacheKey = `${targetLanguage}\0${lines.join('\n')}`;
+  const provider = normalizeTranslationProvider(settings.lyrics.translationProvider);
+  const cacheKey = `${provider}\0${targetLanguage}\0${lines.join('\n')}`;
   if (lyricsTranslationCache.has(cacheKey)) {
     return lyricsTranslationCache.get(cacheKey);
   }
-  const translatedBatches = await Promise.all(
-    createTranslationBatches(lines).map((batch) => translateGoogleBatch(batch, targetLanguage))
-  );
+  if (provider === 'deepl' && !deeplAuthKey) {
+    throw new Error('DeepL is selected but no API Free key is configured.');
+  }
+  const translatedBatches = provider === 'deepl'
+    ? await Promise.all(createDeepLLyricsPayloads(lines, targetLanguage)
+      .map((batch) => translateDeepLPayload(batch, deeplAuthKey)))
+    : await Promise.all(createGoogleLyricsBatches(lines)
+      .map((batch) => translateGoogleBatch(batch, targetLanguage)));
   const translatedLines = translatedBatches.flatMap((batch) => batch.lines);
   if (translatedLines.length !== lines.length) {
-    throw new Error('Google Translate did not preserve the lyrics timeline.');
+    throw new Error('The translation service did not preserve the lyrics timeline.');
   }
   const result = {
     lines: translatedLines,
+    provider,
     sourceLanguage: translatedBatches.find((batch) => batch.detectedLanguage)?.detectedLanguage || '',
     targetLanguage
   };
@@ -355,6 +439,117 @@ function getCachedMusicUrl() {
   return MUSIC_URL;
 }
 
+function persistWindowSettings() {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isMaximized()) {
+    settings = { ...settings, windowBounds: mainWindow.getBounds() };
+  }
+  writeSettings();
+}
+
+function restartApplication() {
+  if (restartRequested) {
+    return;
+  }
+
+  restartRequested = true;
+  isQuitting = true;
+  clearTimeout(cacheCaptureTimer);
+  clearStartupRevealTimers();
+
+  try {
+    persistWindowSettings();
+  } catch (error) {
+    console.warn('Unable to save settings before restarting:', error.message);
+  }
+
+  try {
+    app.relaunch();
+  } catch (error) {
+    restartRequested = false;
+    isQuitting = false;
+    console.warn('Unable to restart the application:', error.message);
+    return;
+  }
+
+  const forceExitTimer = setTimeout(() => app.exit(0), 1500);
+  forceExitTimer.unref?.();
+  app.quit();
+}
+
+function getDeepLConfigWindowTitle(locale) {
+  return `${getDeepLConfigStrings(locale).title} - ${APP_NAME}`;
+}
+
+function openDeepLConfigWindow(locale = '') {
+  if (deeplConfigWindow && !deeplConfigWindow.isDestroyed()) {
+    deeplConfigWindow.focus();
+    return deeplConfigPromise;
+  }
+
+  const currentWindow = new BrowserWindow({
+    autoHideMenuBar: true,
+    backgroundColor: '#202124',
+    closable: true,
+    frame: true,
+    fullscreenable: false,
+    height: 360,
+    icon: iconPath,
+    maximizable: false,
+    minimizable: false,
+    modal: true,
+    parent: mainWindow,
+    resizable: false,
+    show: false,
+    title: getDeepLConfigWindowTitle(locale),
+    webPreferences: {
+      contextIsolation: true,
+      devTools: false,
+      preload: deeplConfigPreloadPath,
+      sandbox: true
+    },
+    width: 500
+  });
+  deeplConfigWindow = currentWindow;
+  currentWindow.setMenuBarVisibility(false);
+  currentWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  currentWindow.once('ready-to-show', () => currentWindow.show());
+  deeplConfigPromise = new Promise((resolve) => {
+    currentWindow.once('closed', () => {
+      if (deeplConfigWindow === currentWindow) {
+        deeplConfigWindow = null;
+      }
+      const result = getAppearanceSettings();
+      deeplConfigPromise = null;
+      resolve(result);
+    });
+  });
+  currentWindow.loadFile(deeplConfigPath, {
+    query: { locale: String(locale || '').slice(0, 35) }
+  }).catch((error) => {
+    console.warn('Unable to open DeepL configuration:', error.message);
+    if (!currentWindow.isDestroyed()) {
+      currentWindow.close();
+    }
+  });
+  return deeplConfigPromise;
+}
+
+function installYouTubeLanguageMonitor(musicSession) {
+  musicSession.cookies.on('changed', (_event, cookie, _cause, removed) => {
+    const domain = String(cookie.domain || '').replace(/^\./u, '');
+    if (removed || cookie.name !== 'PREF'
+      || (domain !== 'youtube.com' && !domain.endsWith('.youtube.com'))) {
+      return;
+    }
+    const nextLanguage = parseYouTubeLanguagePreference(cookie.value);
+    if (!nextLanguage || nextLanguage === youtubeLanguagePreference) {
+      return;
+    }
+    youtubeLanguagePreference = nextLanguage;
+    restartApplication();
+  });
+}
+
 function resizeMusicView() {
   if (!mainWindow || !musicView || mainWindow.isDestroyed()) {
     return;
@@ -405,7 +600,7 @@ function openAuthWindow(url) {
     autoHideMenuBar: true,
     backgroundColor: '#f8fafd',
     icon: iconPath,
-    title: `登录 Google 账号 - ${APP_NAME}`,
+    title: `${getAppStrings(app.getLocale()).authTitle} - ${APP_NAME}`,
     webPreferences: {
       partition: 'persist:youtube-music',
       contextIsolation: true,
@@ -655,18 +850,19 @@ function createTray() {
   tray.setToolTip(APP_NAME);
 
   const refreshMenu = () => {
+    const strings = getAppStrings(app.getLocale());
     tray.setContextMenu(Menu.buildFromTemplate([
       {
-        label: '打开 YouTube Music',
+        label: strings.trayOpen,
         click: showMainWindow
       },
       { type: 'separator' },
       {
-        label: '最小化到托盘',
+        label: strings.trayHide,
         click: () => captureBeforeWindowAction(() => mainWindow?.hide())
       },
       {
-        label: '退出',
+        label: strings.trayQuit,
         click: () => captureBeforeWindowAction(() => {
           isQuitting = true;
           app.quit();
@@ -744,7 +940,7 @@ function configureMusicView() {
           maximizable: true,
           minimizable: true,
           parent: mainWindow,
-          title: `登录 Google 账号 - ${APP_NAME}`,
+          title: `${getAppStrings(app.getLocale()).authTitle} - ${APP_NAME}`,
           titleBarStyle: 'default',
           webPreferences: {
             partition: 'persist:youtube-music',
@@ -785,6 +981,20 @@ function configureMusicView() {
 }
 
 function installIpcHandlers() {
+  ipcMain.on('translation:get-deepl-strings', (event) => {
+    if (!deeplConfigWindow || event.sender !== deeplConfigWindow.webContents) {
+      event.returnValue = null;
+      return;
+    }
+    let locale = '';
+    try {
+      locale = new URL(event.sender.getURL()).searchParams.get('locale') || '';
+    } catch {}
+    event.returnValue = {
+      ...getDeepLConfigStrings(locale),
+      languageTag: getAppStrings(locale).languageTag
+    };
+  });
   ipcMain.handle('appearance:get', (event) => {
     if (!musicView || event.sender !== musicView.webContents) {
       throw new Error('Appearance settings are only available to the music view.');
@@ -794,6 +1004,13 @@ function installIpcHandlers() {
   ipcMain.handle('appearance:set', (event, patch = {}) => {
     if (!musicView || event.sender !== musicView.webContents) {
       throw new Error('Appearance settings are only available to the music view.');
+    }
+    const requestedTranslationProvider = normalizeTranslationProvider(
+      patch.lyricsTranslationProvider ?? settings.lyrics.translationProvider
+    );
+    if (patch.lyricsTranslationProvider !== undefined
+      && requestedTranslationProvider === 'deepl' && !deeplAuthKey) {
+      throw new Error('Configure a DeepL API Free key before selecting DeepL.');
     }
 
     const nextAppearance = {
@@ -809,8 +1026,12 @@ function installIpcHandlers() {
       lrclibEnabled: typeof patch.lrclibLyrics === 'boolean'
         ? patch.lrclibLyrics
         : settings.lyrics.lrclibEnabled,
-      neteaseEnabled: nextLyricsEnabled(settings, patch)
+      neteaseEnabled: nextLyricsEnabled(settings, patch),
+      neteaseTranslationSource: nextNeteaseTranslationSourceEnabled(settings, patch),
+      translationProvider: requestedTranslationProvider
     };
+    const previousTranslationProvider = settings.lyrics.translationProvider;
+    const previousNeteaseTranslationSource = settings.lyrics.neteaseTranslationSource;
     settings = normalizeSettings({
       ...settings,
       appearance: nextAppearance,
@@ -819,8 +1040,38 @@ function installIpcHandlers() {
         : settings.closeAction,
       lyrics: nextLyrics
     });
+    if (previousTranslationProvider !== settings.lyrics.translationProvider
+      || previousNeteaseTranslationSource !== settings.lyrics.neteaseTranslationSource) {
+      lyricsTranslationCache.clear();
+    }
     writeSettings();
     return getAppearanceSettings();
+  });
+  ipcMain.handle('translation:open-deepl-config', (event, payload = {}) => {
+    if (!musicView || event.sender !== musicView.webContents) {
+      throw new Error('DeepL configuration is only available to the music view.');
+    }
+    return openDeepLConfigWindow(payload.locale);
+  });
+  ipcMain.handle('translation:deepl-save', async (event, payload = {}) => {
+    if (!deeplConfigWindow || event.sender !== deeplConfigWindow.webContents) {
+      throw new Error('DeepL credentials are only accepted from the local configuration window.');
+    }
+    const configContents = event.sender;
+    const authKey = normalizeDeepLAuthKey(payload.authKey);
+    await validateDeepLAuthKey(authKey);
+    if (!deeplConfigWindow || deeplConfigWindow.isDestroyed()
+      || configContents !== deeplConfigWindow.webContents) {
+      throw new Error('DeepL configuration was closed before validation completed.');
+    }
+    storeDeepLAuthKey(authKey);
+    lyricsTranslationCache.clear();
+    return { configured: true };
+  });
+  ipcMain.on('translation:deepl-close', (event) => {
+    if (deeplConfigWindow && event.sender === deeplConfigWindow.webContents) {
+      deeplConfigWindow.close();
+    }
   });
   ipcMain.handle('lyrics:resolve', (event, payload = {}) => {
     if (!musicView || event.sender !== musicView.webContents) {
@@ -847,6 +1098,19 @@ function installIpcHandlers() {
     if (musicView && event.sender === musicView.webContents) {
       desktopLyricsState = null;
     }
+  });
+  ipcMain.on('music:reload', (event) => {
+    if (musicView && event.sender === musicView.webContents
+      && !musicView.webContents.isDestroyed()) {
+      restartApplication();
+    }
+  });
+  ipcMain.on('music:language-changed', (event) => {
+    if (!musicView || event.sender !== musicView.webContents
+      || musicView.webContents.isDestroyed()) {
+      return;
+    }
+    restartApplication();
   });
   ipcMain.on('window:minimize', () => mainWindow?.minimize());
   ipcMain.on('window:toggle-maximize', () => {
@@ -875,7 +1139,7 @@ function installIpcHandlers() {
       case 'copy': contents.copy(); break;
       case 'paste': contents.paste(); break;
       case 'select-all': contents.selectAll(); break;
-      case 'reload': contents.reload(); break;
+      case 'reload': restartApplication(); break;
       case 'copy-link':
         if (typeof payload.url === 'string') {
           clipboard.writeText(payload.url);
@@ -1020,13 +1284,23 @@ if (!hasSingleInstanceLock) {
 } else {
   app.on('second-instance', showMainWindow);
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     app.setName(APP_NAME);
     if (process.platform === 'win32') {
       app.setAppUserModelId('com.muxyang.youtubemusicme');
     }
+    loadDeepLAuthKey();
     const musicSession = session.fromPartition('persist:youtube-music');
     electronUserAgent = musicSession.getUserAgent();
+    try {
+      const preferenceCookies = await musicSession.cookies.get({ name: 'PREF', url: MUSIC_URL });
+      youtubeLanguagePreference = parseYouTubeLanguagePreference(
+        preferenceCookies.at(-1)?.value
+      );
+    } catch {
+      youtubeLanguagePreference = '';
+    }
+    installYouTubeLanguageMonitor(musicSession);
 
     musicSession.webRequest.onBeforeSendHeaders(
       { urls: ['https://accounts.google.com/*'] },
@@ -1052,10 +1326,7 @@ app.on('before-quit', () => {
   isQuitting = true;
   clearTimeout(cacheCaptureTimer);
   clearStartupRevealTimers();
-  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isMaximized()) {
-    settings = { ...settings, windowBounds: mainWindow.getBounds() };
-  }
-  writeSettings();
+  persistWindowSettings();
 });
 
 app.on('window-all-closed', () => {

@@ -1,7 +1,7 @@
 {
   "name": "youtube-music-me",
   "version": "0.1.0",
-  "description": "A lightweight YouTube Music desktop shell for Windows and Linux.",
+  "description": "An unofficial YouTube Music desktop client for Windows and Linux.",
   "main": "src/main.js",
   "author": "MuxYang",
   "license": "MIT",

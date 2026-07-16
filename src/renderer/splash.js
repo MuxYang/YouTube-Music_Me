@@ -7,8 +7,16 @@ const splash = document.getElementById('splash');
 const errorPanel = document.getElementById('error-panel');
 const retryButton = document.getElementById('retry');
 const quitButton = document.getElementById('quit');
+const errorText = document.getElementById('error-text');
+const strings = window.startup.strings;
 let exitRequested = false;
 let transitionReported = false;
+
+document.documentElement.lang = strings.languageTag;
+splash.setAttribute('aria-label', strings.splashLoading);
+errorText.textContent = strings.splashError;
+retryButton.textContent = strings.splashRetry;
+quitButton.textContent = strings.splashQuit;
 
 function reportTransitionComplete() {
   if (transitionReported) {

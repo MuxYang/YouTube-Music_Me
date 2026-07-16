@@ -3,10 +3,18 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const { isExternalPolicyUrl } = require('../config');
 const {
+  getAppStrings,
+  getAppearanceStrings: getLocalizedAppearanceStrings,
+  normalizeUiLocale
+} = require('../i18n');
+const {
   alignSyncedTranslation,
+  canSeekLyricsTimeline,
   isLikelyRomanizedLyrics,
+  isLyricsMetadataLine,
   normalizeTranslationLanguage,
   parseSyncedLyrics,
+  selectLyricsTranslationSource,
   stripPresentationNoise
 } = require('../lyrics');
 const {
@@ -49,23 +57,35 @@ let currentLyricsIndex = -1;
 let currentLyricsResult = null;
 let currentLyricsTrack = null;
 let forceLyricsRefreshKey = '';
+let lyricsRetryAt = 0;
+let lyricsRetryAttempted = false;
+let lyricsRetryKey = '';
 let lyricsUserScrollUntil = 0;
 let lyricsTranslationRequestToken = 0;
 let pendingLyricsIntegrationRefresh = false;
 let appearanceSettingsInitialized = false;
+let currentUiLocale = '';
+let currentDocumentLanguage = '';
+let pendingLanguageMenuUntil = 0;
+let languageReloadTimer = null;
+let windowIsMaximized = false;
 let surfaceAnimationFrame = null;
 let surfaceAnimationObserver = null;
 const lyricsTranslationCache = new Map();
 const settingsContentAnimationTimes = new WeakMap();
 const settingsTouchSelections = new WeakMap();
+const settingsCloseOverlays = new WeakSet();
 const surfaceAnimationTimes = new Map();
 const surfaceVisibility = new WeakMap();
 let appearanceSettings = {
   animations: false,
   autoTranslateLyrics: false,
   closeAction: 'tray',
+  deeplConfigured: false,
   lrclibLyrics: false,
+  lyricsTranslationProvider: 'google',
   neteaseLyrics: false,
+  neteaseTranslationSource: false,
   translucentSurfaces: false
 };
 const settingsCloseBypass = new WeakSet();
@@ -342,137 +362,68 @@ function samplePagePlayback() {
   };
 }
 
-const appearanceStrings = {
-  en: {
-    animationsDescription: 'Adds transitions to search suggestions, the account menu, and settings.',
-    animationsTitle: 'Animations',
-    autoTranslateDescription: 'Automatically adds a translated line when the lyrics language differs from the app language.',
-    autoTranslateTitle: 'Automatically translate lyrics',
-    captionSource: 'Timeline provided by YouTube CC',
-    closeActionAsk: 'Ask every time',
-    closeActionDescription: 'Choose what the window close button does.',
-    closeActionQuit: 'Exit the app',
-    closeActionTitle: 'Close button action',
-    closeActionTray: 'Minimize to tray',
-    closeDialogCancel: 'Cancel',
-    closeDialogDescription: 'You can exit the app or hide it in the system tray and keep playback running.',
-    closeDialogQuit: 'Exit app',
-    closeDialogRemember: 'Remember my choice',
-    closeDialogTitle: 'Close YouTube Music?',
-    closeDialogTray: 'Hide in system tray',
-    consentAgree: 'Agree',
-    consentCancel: 'Cancel',
-    lrclibConsentDescription: 'Track titles, artists, albums, and durations will be sent to LRCLIB to search for synced lyrics. Do you agree?',
-    lrclibConsentTitle: 'Enable synced lyrics?',
-    lyricsDescription: 'Loads time-synced lyrics from LRCLIB in the background.',
-    lyricsError: 'The configured lyrics services could not be reached.',
-    lyricsLoading: 'Loading synced lyrics...',
-    lyricsNotFound: 'No synced lyrics were found for this track.',
-    lyricsSource: 'Lyrics provided by LRCLIB',
-    lyricsTitle: 'Synced lyrics',
-    neteaseConsentDescription: 'Warning: your track information may be collected by NetEase Cloud Music in China. Do you agree to send it for lyrics searches?',
-    neteaseConsentTitle: 'Enable NetEase Cloud Music?',
-    neteaseDescription: 'Prefer NetEase Cloud Music lyrics and use LRCLIB only as a fallback.',
-    neteaseError: 'NetEase Cloud Music lyrics could not be loaded.',
-    neteaseSource: 'Lyrics provided by NetEase Cloud Music',
-    neteaseTitle: 'Use NetEase Cloud Music lyrics',
-    neteaseTranslationSource: 'Translated by NetEase Cloud Music',
-    otherCategory: 'Other',
-    showOriginalLyrics: 'Show original lyrics',
-    translateLyrics: 'Translate lyrics',
-    translatingLyrics: 'Translating lyrics...',
-    translationError: 'Lyrics could not be translated.',
-    translationSource: 'Translated by Google',
-    transparencyDescription: 'Adds a translucent frosted-glass effect to settings, account menus, and other pop-up surfaces.',
-    transparencyTitle: 'Global transparency'
-  },
-  zhHans: {
-    animationsDescription: '为搜索联想、账号菜单和设置界面启用过渡动画。',
-    animationsTitle: '动画',
-    autoTranslateDescription: '歌词语言与软件语言不同时，自动在原文下方显示翻译。',
-    autoTranslateTitle: '自动翻译歌词',
-    captionSource: '时间轴来源：YouTube CC',
-    closeActionAsk: '每次询问',
-    closeActionDescription: '选择点击窗口关闭按钮时执行的操作。',
-    closeActionQuit: '退出软件',
-    closeActionTitle: '点击关闭按钮时的操作',
-    closeActionTray: '最小化到托盘',
-    closeDialogCancel: '取消',
-    closeDialogDescription: '你可以退出应用，或隐藏到系统托盘并继续保留当前播放状态。',
-    closeDialogQuit: '退出应用',
-    closeDialogRemember: '记住我的操作',
-    closeDialogTitle: '关闭 YouTube Music？',
-    closeDialogTray: '隐藏到系统托盘',
-    consentAgree: '同意',
-    consentCancel: '取消',
-    lrclibConsentDescription: '歌曲标题、艺术家、专辑和时长将发送至 LRCLIB，用于搜索同步歌词。是否同意？',
-    lrclibConsentTitle: '开启同步歌词？',
-    lyricsDescription: '在后台通过 LRCLIB 加载同步歌词。',
-    lyricsError: '暂时无法连接已配置的歌词服务。',
-    lyricsLoading: '正在加载同步歌词…',
-    lyricsNotFound: '暂未找到这首歌的同步歌词。',
-    lyricsSource: '歌词来源：LRCLIB',
-    lyricsTitle: '同步歌词',
-    neteaseConsentDescription: '是否同意使用网易云音乐接口获取歌词？歌曲信息将发送至网易云音乐。',
-    neteaseConsentTitle: '开启网易云音乐歌词？',
-    neteaseDescription: '优先使用网易云音乐歌词，未找到或请求失败时仅回退到 LRCLIB。',
-    neteaseError: '暂时无法加载网易云音乐歌词。',
-    neteaseSource: '歌词来源：网易云音乐',
-    neteaseTitle: '使用网易云音乐歌词',
-    neteaseTranslationSource: '翻译来源：网易云音乐',
-    otherCategory: '其他',
-    showOriginalLyrics: '显示原文',
-    translateLyrics: '翻译歌词',
-    translatingLyrics: '正在翻译歌词…',
-    translationError: '暂时无法翻译歌词。',
-    translationSource: '由 Google 翻译',
-    transparencyDescription: '为设置、账号菜单和其他弹出内容加入半透明磨砂玻璃效果。',
-    transparencyTitle: '全局透明'
-  },
-  zhHant: {
-    animationsDescription: '為搜尋建議、帳號選單和設定介面啟用過場動畫。',
-    animationsTitle: '動畫',
-    autoTranslateDescription: '歌詞語言與軟體語言不同時，自動在原文下方顯示翻譯。',
-    autoTranslateTitle: '自動翻譯歌詞',
-    captionSource: '時間軸來源：YouTube CC',
-    closeActionAsk: '每次詢問',
-    closeActionDescription: '選擇點擊視窗關閉按鈕時執行的操作。',
-    closeActionQuit: '退出軟體',
-    closeActionTitle: '點擊關閉按鈕時的操作',
-    closeActionTray: '最小化到系統匣',
-    closeDialogCancel: '取消',
-    closeDialogDescription: '你可以退出應用程式，或隱藏到系統匣並繼續保留目前播放狀態。',
-    closeDialogQuit: '退出應用程式',
-    closeDialogRemember: '記住我的操作',
-    closeDialogTitle: '關閉 YouTube Music？',
-    closeDialogTray: '隱藏到系統匣',
-    consentAgree: '同意',
-    consentCancel: '取消',
-    lrclibConsentDescription: '歌曲標題、藝人、專輯和時長將傳送至 LRCLIB，用於搜尋同步歌詞。是否同意？',
-    lrclibConsentTitle: '開啟同步歌詞？',
-    lyricsDescription: '在背景透過 LRCLIB 載入同步歌詞。',
-    lyricsError: '暫時無法連線已設定的歌詞服務。',
-    lyricsLoading: '正在載入同步歌詞…',
-    lyricsNotFound: '暫未找到這首歌的同步歌詞。',
-    lyricsSource: '歌詞來源：LRCLIB',
-    lyricsTitle: '同步歌詞',
-    neteaseConsentDescription: '是否同意使用網易雲音樂介面取得歌詞？歌曲資訊將傳送至網易雲音樂。',
-    neteaseConsentTitle: '開啟網易雲音樂歌詞？',
-    neteaseDescription: '優先使用網易雲音樂歌詞，未找到或請求失敗時僅回退到 LRCLIB。',
-    neteaseError: '暫時無法載入網易雲音樂歌詞。',
-    neteaseSource: '歌詞來源：網易雲音樂',
-    neteaseTitle: '使用網易雲音樂歌詞',
-    neteaseTranslationSource: '翻譯來源：網易雲音樂',
-    otherCategory: '其他',
-    showOriginalLyrics: '顯示原文',
-    translateLyrics: '翻譯歌詞',
-    translatingLyrics: '正在翻譯歌詞…',
-    translationError: '暫時無法翻譯歌詞。',
-    translationSource: '由 Google 翻譯',
-    transparencyDescription: '為設定、帳號選單和其他彈出內容加入半透明毛玻璃效果。',
-    transparencyTitle: '全域透明'
+function seekPagePlayback(expectedVideoId, requestedPosition) {
+  const number = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const callNumber = (target, method) => {
+    try {
+      return number(target?.[method]?.());
+    } catch {
+      return null;
+    }
+  };
+  const players = [...document.querySelectorAll('#movie_player')];
+  let player = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+  for (const candidate of players) {
+    const mediaElements = [...candidate.querySelectorAll('video, audio')];
+    const state = callNumber(candidate, 'getPlayerState');
+    const playing = mediaElements.some((media) => !media.paused && !media.ended && media.currentSrc);
+    const visible = mediaElements.some((media) => {
+      const bounds = media.getBoundingClientRect();
+      return bounds.width > 0 && bounds.height > 0;
+    });
+    const score = (playing || state === 1 ? 300 : 0)
+      + (state === 2 ? 120 : 0)
+      + (visible ? 80 : 0)
+      + (mediaElements.some((media) => media.currentSrc) ? 10 : 0);
+    if (score >= bestScore) {
+      player = candidate;
+      bestScore = score;
+    }
   }
-};
+  if (!player) {
+    return false;
+  }
+
+  let activeVideoId = '';
+  try {
+    activeVideoId = String(player.getPlayerResponse?.()?.videoDetails?.videoId || '');
+  } catch {}
+  if (!expectedVideoId || activeVideoId !== expectedVideoId) {
+    return false;
+  }
+
+  const position = Math.max(0, number(requestedPosition) || 0);
+  try {
+    if (typeof player.seekTo === 'function') {
+      player.seekTo(position, true);
+      return true;
+    }
+  } catch {}
+  const mediaElements = [...player.querySelectorAll('video, audio')];
+  const media = mediaElements.find((element) => !element.paused && !element.ended && element.currentSrc)
+    || mediaElements.find((element) => element.currentSrc)
+    || mediaElements[0];
+  if (!media) {
+    return false;
+  }
+  media.currentTime = position;
+  return true;
+}
+
 
 const icons = {
   minimize: [['path', { d: 'M5 12h14' }]],
@@ -505,14 +456,143 @@ const icons = {
 };
 
 function getAppearanceStrings() {
-  const language = document.documentElement.lang.toLowerCase();
-  if (language.startsWith('zh-hant') || language.startsWith('zh-tw') || language.startsWith('zh-hk')) {
-    return appearanceStrings.zhHant;
+  const language = document.documentElement.lang;
+  return { ...getLocalizedAppearanceStrings(language), ...getAppStrings(language) };
+}
+
+function getLyricsSourceText(strings = getAppearanceStrings()) {
+  return currentLyricsResult?.source === 'netease'
+    ? strings.neteaseSource
+    : currentLyricsResult?.source === 'youtube-cc'
+      ? strings.captionSource
+      : strings.lyricsSource;
+}
+
+function getTranslationSourceText(provider, strings = getAppearanceStrings()) {
+  if (provider === 'netease') {
+    return strings.neteaseTranslationSource;
   }
-  if (language.startsWith('zh')) {
-    return appearanceStrings.zhHans;
+  return provider === 'deepl' ? strings.deeplTranslationSource : strings.translationSource;
+}
+
+function getLyricsSourceAttribution(panel, originalText, strings = getAppearanceStrings()) {
+  if (panel.dataset.translated !== 'true') {
+    return originalText;
   }
-  return appearanceStrings.en;
+  return [
+    originalText,
+    ...(panel.dataset.translationInputSource === 'netease-zh'
+      ? [strings.neteaseChineseSourceLabel]
+      : []),
+    getTranslationSourceText(panel.dataset.translationProvider, strings)
+  ].join(' · ');
+}
+
+function updateWindowControlLocalization() {
+  const strings = getAppearanceStrings();
+  const controls = document.getElementById(CONTROL_ID);
+  controls?.setAttribute('aria-label', strings.windowControls);
+  const labels = {
+    close: strings.close,
+    minimize: strings.minimize,
+    'toggle-maximize': windowIsMaximized ? strings.restore : strings.maximize
+  };
+  for (const button of controls?.querySelectorAll('.ytm-desktop-control') || []) {
+    const label = labels[button.dataset.action];
+    if (label) {
+      button.title = label;
+      button.setAttribute('aria-label', label);
+    }
+  }
+}
+
+function refreshInjectedLocalization() {
+  const strings = getAppearanceStrings();
+  document.documentElement.dataset.ytmDesktopLocale = normalizeUiLocale(
+    document.documentElement.lang
+  );
+  closeSettingPicker();
+  closeMaterialContextMenu();
+  if (document.getElementById(CONSENT_DIALOG_ID)) {
+    closeConsentDialog(false);
+  }
+  closeCloseDialog(true);
+  updateWindowControlLocalization();
+
+  for (const settingsPage of document.querySelectorAll('ytmusic-settings-page')) {
+    const active = settingsPage.classList.contains('ytm-desktop-style-active');
+    const styleItem = settingsPage.querySelector('.ytm-desktop-style-category');
+    const title = styleItem?.querySelector('.title');
+    if (title) {
+      title.textContent = strings.otherCategory;
+    }
+    const oldPanel = settingsPage.querySelector(`#${STYLE_PANEL_ID}`);
+    if (oldPanel) {
+      oldPanel.replaceWith(createStylePanel());
+      if (active) {
+        setStylePanelActive(settingsPage, true);
+      }
+    }
+  }
+  updateAppearanceControls();
+
+  for (const panel of getLyricsPanels()) {
+    panel.setAttribute('aria-label', strings.lyricsTitle);
+    const status = panel.querySelector('.ytm-desktop-lyrics-status');
+    if (status && !status.hidden) {
+      const messages = {
+        empty: strings.lyricsNotFound,
+        error: strings.lyricsError,
+        loading: strings.lyricsLoading
+      };
+      if (messages[currentLyricsState]) {
+        status.textContent = messages[currentLyricsState];
+      }
+    }
+    const source = panel.querySelector('.ytm-desktop-lyrics-source');
+    if (source && !source.hidden) {
+      const originalText = getLyricsSourceText(strings);
+      source.dataset.originalText = originalText;
+      source.textContent = getLyricsSourceAttribution(panel, originalText, strings);
+    }
+    const translateButton = panel.querySelector('.ytm-desktop-lyrics-translate');
+    if (translateButton) {
+      const label = translateButton.classList.contains('loading')
+        ? strings.translatingLyrics
+        : translateButton.classList.contains('error')
+          ? strings.translationError
+          : panel.dataset.translated === 'true'
+            ? strings.showOriginalLyrics
+            : strings.translateLyrics;
+      translateButton.title = label;
+      translateButton.setAttribute('aria-label', label);
+    }
+    delete panel.dataset.autoTranslationChecked;
+  }
+  lyricsTranslationRequestToken += 1;
+  requestLyricsRefresh();
+}
+
+function handleDocumentLanguageChange() {
+  const language = String(document.documentElement.lang || '').toLowerCase();
+  const locale = normalizeUiLocale(document.documentElement.lang);
+  if (language === currentDocumentLanguage) {
+    return;
+  }
+  currentDocumentLanguage = language;
+  currentUiLocale = locale;
+  refreshInjectedLocalization();
+}
+
+function installLanguageMonitor() {
+  currentDocumentLanguage = String(document.documentElement.lang || '').toLowerCase();
+  currentUiLocale = normalizeUiLocale(document.documentElement.lang);
+  document.documentElement.dataset.ytmDesktopLocale = currentUiLocale;
+  const observer = new MutationObserver(handleDocumentLanguageChange);
+  observer.observe(document.documentElement, {
+    attributeFilter: ['lang'],
+    attributes: true
+  });
 }
 
 function installPageLoadingGuard() {
@@ -555,7 +635,10 @@ function installPageLoadingGuard() {
   const spinner = document.createElementNS(namespace, 'svg');
   const circle = document.createElementNS(namespace, 'circle');
   guard.id = LOADING_GUARD_ID;
-  guard.setAttribute('aria-label', 'Loading YouTube Music');
+  guard.setAttribute(
+    'aria-label',
+    getAppStrings(document.documentElement.lang).splashLoading
+  );
   guard.setAttribute('role', 'status');
   spinner.setAttribute('viewBox', '0 0 48 48');
   spinner.setAttribute('aria-hidden', 'true');
@@ -601,17 +684,24 @@ function createIcon(definition) {
 }
 
 function updateAppearanceControls() {
+  const simplifiedChinese = normalizeUiLocale(document.documentElement.lang) === 'zh-cn';
   for (const button of document.querySelectorAll('.ytm-desktop-setting-toggle[data-setting]')) {
     const checked = appearanceSettings[button.dataset.setting] === true;
     button.classList.toggle('checked', checked);
-    button.disabled = button.dataset.setting === 'neteaseLyrics'
-      && !appearanceSettings.lrclibLyrics;
+    button.disabled = (button.dataset.setting === 'neteaseLyrics'
+      && !appearanceSettings.lrclibLyrics)
+      || (button.dataset.setting === 'neteaseTranslationSource'
+        && (!appearanceSettings.lrclibLyrics
+          || !appearanceSettings.neteaseLyrics
+          || simplifiedChinese));
     if (button.getAttribute('aria-checked') !== String(checked)) {
       button.setAttribute('aria-checked', String(checked));
     }
   }
   for (const select of document.querySelectorAll('.ytm-desktop-setting-select[data-setting]')) {
     const value = appearanceSettings[select.dataset.setting];
+    select.disabled = select.dataset.setting === 'lyricsTranslationProvider'
+      && !appearanceSettings.lrclibLyrics;
     const option = select._settingOptions?.find((candidate) => candidate.value === value);
     if (option) {
       select.dataset.value = value;
@@ -622,10 +712,42 @@ function updateAppearanceControls() {
     }
   }
   for (const row of document.querySelectorAll(
-    '.ytm-desktop-setting-row[data-setting-row="neteaseLyrics"],'
-    + '.ytm-desktop-setting-row[data-setting-row="autoTranslateLyrics"]'
+    '.ytm-desktop-setting-row[data-setting-row="autoTranslateLyrics"],'
+    + '.ytm-desktop-setting-row[data-setting-row="lyricsTranslationProvider"]'
   )) {
     row.hidden = !appearanceSettings.lrclibLyrics;
+  }
+  for (const row of document.querySelectorAll(
+    '.ytm-desktop-setting-row[data-setting-row="neteaseLyrics"]'
+  )) {
+    row.hidden = !appearanceSettings.lrclibLyrics;
+  }
+  for (const row of document.querySelectorAll(
+    '.ytm-desktop-setting-row[data-setting-row="neteaseTranslationSource"]'
+  )) {
+    row.hidden = !appearanceSettings.lrclibLyrics
+      || !appearanceSettings.neteaseLyrics
+      || simplifiedChinese;
+  }
+  const deeplRow = document.querySelector(
+    '.ytm-desktop-setting-row[data-setting-row="deeplApiKey"]'
+  );
+  if (deeplRow) {
+    const strings = getAppearanceStrings();
+    deeplRow.hidden = !appearanceSettings.lrclibLyrics
+      || appearanceSettings.lyricsTranslationProvider !== 'deepl';
+    const summary = deeplRow.querySelector('.ytm-desktop-setting-summary');
+    const button = deeplRow.querySelector('.ytm-desktop-setting-action');
+    if (summary) {
+      summary.textContent = appearanceSettings.deeplConfigured
+        ? strings.deeplApiKeyConfiguredDescription
+        : strings.deeplApiKeyMissingDescription;
+    }
+    if (button) {
+      button.textContent = appearanceSettings.deeplConfigured
+        ? strings.deeplUpdate
+        : strings.deeplConfigure;
+    }
   }
 }
 
@@ -633,14 +755,19 @@ function applyAppearanceSettings(value = {}, options = {}) {
   const autoTranslateWasEnabled = appearanceSettings.autoTranslateLyrics;
   const previousLyricsEnabled = appearanceSettings.lrclibLyrics;
   const previousNeteaseEnabled = appearanceSettings.neteaseLyrics;
+  const previousNeteaseTranslationSource = appearanceSettings.neteaseTranslationSource;
+  const previousTranslationProvider = appearanceSettings.lyricsTranslationProvider;
   appearanceSettings = {
     animations: value.animations === true,
     autoTranslateLyrics: value.autoTranslateLyrics === true,
     closeAction: ['ask', 'tray', 'quit'].includes(value.closeAction)
       ? value.closeAction
       : 'tray',
+    deeplConfigured: value.deeplConfigured === true,
     lrclibLyrics: value.lrclibLyrics === true,
+    lyricsTranslationProvider: value.lyricsTranslationProvider === 'deepl' ? 'deepl' : 'google',
     neteaseLyrics: value.neteaseLyrics === true,
+    neteaseTranslationSource: value.neteaseTranslationSource === true,
     translucentSurfaces: value.translucentSurfaces === true
   };
   document.documentElement.classList.toggle(
@@ -659,11 +786,25 @@ function applyAppearanceSettings(value = {}, options = {}) {
   const lyricsIntegrationChanged = !appearanceSettingsInitialized
     || previousLyricsEnabled !== appearanceSettings.lrclibLyrics
     || previousNeteaseEnabled !== appearanceSettings.neteaseLyrics;
-  const autoTranslationChanged = autoTranslateWasEnabled !== appearanceSettings.autoTranslateLyrics;
+  const translationProviderChanged = previousTranslationProvider
+    !== appearanceSettings.lyricsTranslationProvider;
+  const translationSourceChanged = previousNeteaseTranslationSource
+    !== appearanceSettings.neteaseTranslationSource;
+  const autoTranslationChanged = autoTranslateWasEnabled !== appearanceSettings.autoTranslateLyrics
+    || translationProviderChanged
+    || translationSourceChanged;
   const deferLyricsApply = options.deferLyricsRefresh === true
     && (lyricsIntegrationChanged || autoTranslationChanged);
+  if (translationProviderChanged || translationSourceChanged) {
+    lyricsTranslationCache.clear();
+    lyricsTranslationRequestToken += 1;
+    const panel = getCurrentLyricsPanel();
+    if (panel?.dataset.translated === 'true') {
+      applyLyricsTranslation(panel, null);
+    }
+  }
   if (autoTranslationChanged && appearanceSettings.autoTranslateLyrics) {
-    const panel = document.getElementById(LYRICS_PANEL_ID);
+    const panel = getCurrentLyricsPanel();
     if (panel) {
       delete panel.dataset.autoTranslationChecked;
     }
@@ -821,9 +962,10 @@ function closeConsentDialog(result) {
 function showSettingConsent(kind) {
   const strings = getAppearanceStrings();
   const isNetease = kind === 'netease';
+  const isNeteaseChineseSource = kind === 'netease-chinese-source';
   const language = document.documentElement.lang.toLowerCase();
   const isChinese = language.startsWith('zh');
-  const waitSeconds = isNetease && !isChinese ? 5 : 3;
+  const waitSeconds = isNeteaseChineseSource || (isNetease && !isChinese) ? 5 : 3;
   const backdrop = document.createElement('div');
   const surface = document.createElement('section');
   const heading = document.createElement('h2');
@@ -834,10 +976,14 @@ function showSettingConsent(kind) {
   surface.className = 'ytm-material-dialog';
   surface.setAttribute('role', 'dialog');
   surface.setAttribute('aria-modal', 'true');
-  heading.textContent = isNetease ? strings.neteaseConsentTitle : strings.lrclibConsentTitle;
-  description.textContent = isNetease && !isChinese
-    ? appearanceStrings.en.neteaseConsentDescription
-    : isNetease ? strings.neteaseConsentDescription : strings.lrclibConsentDescription;
+  heading.textContent = isNeteaseChineseSource
+    ? strings.neteaseChineseSourceConsentTitle
+    : isNetease ? strings.neteaseConsentTitle : strings.lrclibConsentTitle;
+  description.textContent = isNeteaseChineseSource
+    ? strings.neteaseChineseSourceConsentDescription
+    : isNetease && !isChinese
+      ? getLocalizedAppearanceStrings('en-us').neteaseConsentDescription
+      : isNetease ? strings.neteaseConsentDescription : strings.lrclibConsentDescription;
   actions.className = 'ytm-material-dialog-actions';
   const cancel = createDialogAction(strings.consentCancel, 'quiet', () => closeConsentDialog(false));
   const agree = createDialogAction(
@@ -881,6 +1027,20 @@ function showSettingConsent(kind) {
   return promise;
 }
 
+async function showDeepLConfigurationDialog() {
+  closeSettingPicker();
+  try {
+    const nextSettings = await ipcRenderer.invoke('translation:open-deepl-config', {
+      locale: document.documentElement.lang
+    });
+    applyAppearanceSettings(nextSettings);
+    return nextSettings.deeplConfigured === true;
+  } catch (error) {
+    console.warn('Unable to open DeepL configuration:', error.message);
+    return false;
+  }
+}
+
 async function updateAppearanceSetting(key, value, button) {
   button.disabled = true;
   try {
@@ -890,9 +1050,20 @@ async function updateAppearanceSetting(key, value, button) {
         return;
       }
     }
+    if (value === true && key === 'neteaseTranslationSource') {
+      const accepted = await showSettingConsent('netease-chinese-source');
+      if (!accepted) {
+        return;
+      }
+    }
     const nextSettings = await ipcRenderer.invoke('appearance:set', { [key]: value });
     applyAppearanceSettings(nextSettings, {
-      deferLyricsRefresh: ['autoTranslateLyrics', 'lrclibLyrics', 'neteaseLyrics'].includes(key)
+      deferLyricsRefresh: [
+        'autoTranslateLyrics',
+        'lrclibLyrics',
+        'neteaseLyrics',
+        'neteaseTranslationSource'
+      ].includes(key)
     });
   } catch (error) {
     console.warn('Unable to update appearance settings:', error.message);
@@ -951,6 +1122,13 @@ function closeSettingPicker(restoreFocus = false) {
   return true;
 }
 
+function closeSettingPickerOnSettingsScroll(event) {
+  const scrollTarget = event.target instanceof Element ? event.target : null;
+  if (scrollTarget?.closest('ytmusic-settings-page')) {
+    closeSettingPicker();
+  }
+}
+
 function positionSettingPicker(picker, trigger) {
   const triggerBounds = trigger.getBoundingClientRect();
   const margin = 8;
@@ -1005,6 +1183,15 @@ function openSettingPicker(trigger) {
       for (const candidate of optionButtons) candidate.disabled = true;
       try {
         const key = trigger.dataset.setting;
+        if (key === 'lyricsTranslationProvider' && option.value === 'deepl'
+          && !appearanceSettings.deeplConfigured) {
+          closeSettingPicker();
+          const configured = await showDeepLConfigurationDialog();
+          if (!configured) {
+            trigger.focus({ preventScroll: true });
+            return;
+          }
+        }
         const nextSettings = await ipcRenderer.invoke('appearance:set', {
           [key]: option.value
         });
@@ -1072,7 +1259,7 @@ function createAppearanceSelectRow(key, titleText, summaryText, options) {
   select.setAttribute('aria-haspopup', 'listbox');
   select.setAttribute('aria-expanded', 'false');
   value.className = 'ytm-desktop-setting-select-value';
-  chevron.className = 'ytm-desktop-setting-select-chevron';
+  chevron.setAttribute('class', 'ytm-desktop-setting-select-chevron');
   chevron.setAttribute('aria-hidden', 'true');
   select.append(value, chevron);
   select.addEventListener('click', () => openSettingPicker(select));
@@ -1084,6 +1271,32 @@ function createAppearanceSelectRow(key, titleText, summaryText, options) {
   });
   content.append(title, summary);
   row.append(content, select);
+  return row;
+}
+
+function createDeepLKeyRow(strings) {
+  const row = document.createElement('div');
+  const content = document.createElement('div');
+  const title = document.createElement('div');
+  const summary = document.createElement('div');
+  const button = document.createElement('button');
+  row.className = 'ytm-desktop-setting-row ytm-desktop-setting-select-row';
+  row.dataset.settingRow = 'deeplApiKey';
+  content.className = 'ytm-desktop-setting-copy';
+  title.className = 'ytm-desktop-setting-title';
+  title.textContent = strings.deeplApiKeyTitle;
+  summary.className = 'ytm-desktop-setting-summary';
+  summary.textContent = appearanceSettings.deeplConfigured
+    ? strings.deeplApiKeyConfiguredDescription
+    : strings.deeplApiKeyMissingDescription;
+  button.type = 'button';
+  button.className = 'ytm-desktop-setting-action';
+  button.textContent = appearanceSettings.deeplConfigured
+    ? strings.deeplUpdate
+    : strings.deeplConfigure;
+  button.addEventListener('click', () => showDeepLConfigurationDialog());
+  content.append(title, summary);
+  row.append(content, button);
   return row;
 }
 
@@ -1117,10 +1330,25 @@ function createStylePanel() {
       strings.neteaseDescription
     ),
     createAppearanceSettingRow(
+      'neteaseTranslationSource',
+      strings.neteaseChineseSourceTitle,
+      strings.neteaseChineseSourceDescription
+    ),
+    createAppearanceSettingRow(
       'autoTranslateLyrics',
       strings.autoTranslateTitle,
       strings.autoTranslateDescription
     ),
+    createAppearanceSelectRow(
+      'lyricsTranslationProvider',
+      strings.translationProviderTitle,
+      strings.translationProviderDescription,
+      [
+        { label: strings.translationProviderGoogle, value: 'google' },
+        { label: strings.translationProviderDeepL, value: 'deepl' }
+      ]
+    ),
+    createDeepLKeyRow(strings),
     createAppearanceSelectRow(
       'closeAction',
       strings.closeActionTitle,
@@ -1271,17 +1499,59 @@ function rememberSettingsTouchSelection(event) {
     return;
   }
   const target = event.target instanceof Element ? event.target : null;
-  const item = target?.closest(
-    'ytmusic-settings-page .category-menu-item:not(.ytm-desktop-style-category)'
-  );
+  const item = target?.closest('ytmusic-settings-page .category-menu-item');
   const settingsPage = item?.closest('ytmusic-settings-page');
   if (item && settingsPage) {
     settingsTouchSelections.set(settingsPage, {
+      clientX: event.clientX,
+      clientY: event.clientY,
       item,
+      pointerId: event.pointerId,
       time: performance.now(),
       wasSelected: item.classList.contains('iron-selected')
         && !settingsPage.classList.contains('ytm-desktop-style-active')
     });
+  }
+}
+
+function activateTouchedSettingsSelection(event) {
+  if (!['touch', 'pen'].includes(event.pointerType)) {
+    return;
+  }
+  const target = event.target instanceof Element ? event.target : null;
+  const item = target?.closest('ytmusic-settings-page .category-menu-item');
+  const settingsPage = item?.closest('ytmusic-settings-page');
+  const selection = settingsPage ? settingsTouchSelections.get(settingsPage) : null;
+  if (!item || !settingsPage || selection?.item !== item
+    || selection.pointerId !== event.pointerId
+    || performance.now() - selection.time > 1200
+    || Math.hypot(event.clientX - selection.clientX, event.clientY - selection.clientY) > 12) {
+    return;
+  }
+
+  settingsPage.ytmDesktopSuppressedTouchItem = item;
+  settingsPage.ytmDesktopSuppressTouchClickUntil = performance.now() + 800;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (item.classList.contains('ytm-desktop-style-category')) {
+    settingsTouchSelections.delete(settingsPage);
+    activateStyleSettings(settingsPage, item);
+  } else {
+    activateNativeSettingsItem(settingsPage, item, event);
+  }
+}
+
+function suppressSynthesizedSettingsClick(event) {
+  if (!event.isTrusted) {
+    return;
+  }
+  const target = event.target instanceof Element ? event.target : null;
+  const item = target?.closest('ytmusic-settings-page .category-menu-item');
+  const settingsPage = item?.closest('ytmusic-settings-page');
+  if (item && settingsPage?.ytmDesktopSuppressedTouchItem === item
+    && performance.now() < settingsPage.ytmDesktopSuppressTouchClickUntil) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
   }
 }
 
@@ -1290,6 +1560,12 @@ function activateNativeSettingsItem(settingsPage, item, event) {
     return;
   }
 
+  const touchSelection = settingsTouchSelections.get(settingsPage);
+  const selectedByTouch = touchSelection?.item === item
+    && performance.now() - touchSelection.time < 1000;
+  if (selectedByTouch) {
+    settingsTouchSelections.delete(settingsPage);
+  }
   if (!appearanceSettings.animations) {
     setStylePanelActive(settingsPage, false);
     updateNativeSettingsSelection(settingsPage, item);
@@ -1298,12 +1574,6 @@ function activateNativeSettingsItem(settingsPage, item, event) {
 
   const isCurrentItem = item.classList.contains('iron-selected')
     && !settingsPage.classList.contains('ytm-desktop-style-active');
-  const touchSelection = settingsTouchSelections.get(settingsPage);
-  const selectedByTouch = touchSelection?.item === item
-    && performance.now() - touchSelection.time < 1000;
-  if (selectedByTouch) {
-    settingsTouchSelections.delete(settingsPage);
-  }
   if (isCurrentItem) {
     if (selectedByTouch && !touchSelection.wasSelected && appearanceSettings.animations) {
       window.requestAnimationFrame(() => playSettingsContentPhase(
@@ -1393,6 +1663,22 @@ function bindSettingsMenuKeyboard(settingsPage, menu, styleItem) {
   }, true);
 }
 
+function bindSettingsCloseLifecycle(settingsDialog) {
+  const overlay = settingsDialog?.querySelector('tp-yt-paper-dialog, paper-dialog')
+    || settingsDialog;
+  if (!overlay || settingsCloseOverlays.has(overlay)) {
+    return;
+  }
+  settingsCloseOverlays.add(overlay);
+  overlay.addEventListener('iron-overlay-closed', (event) => {
+    if (event.target !== overlay) {
+      return;
+    }
+    closeSettingPicker();
+    applyPendingLyricsRefresh();
+  });
+}
+
 function installAppearanceSettingsPage() {
   for (const settingsPage of document.querySelectorAll('ytmusic-settings-page')) {
     const menu = settingsPage.querySelector('.category-menu');
@@ -1413,7 +1699,9 @@ function installAppearanceSettingsPage() {
     }
 
     bindSettingsMenuKeyboard(settingsPage, menu, styleItem);
-    nativeCollection.closest('ytmusic-dialog')?.classList.add('ytm-desktop-settings-dialog');
+    const settingsDialog = nativeCollection.closest('ytmusic-dialog');
+    settingsDialog?.classList.add('ytm-desktop-settings-dialog');
+    bindSettingsCloseLifecycle(settingsDialog);
     if (needsStylePanel) {
       updateAppearanceControls();
     }
@@ -1453,6 +1741,7 @@ function interceptSettingsClose(event) {
   const closeControl = target?.closest('ytmusic-settings-page .close-icon');
   const button = closeControl?.querySelector('button') || closeControl;
   if (button) {
+    pendingLanguageMenuUntil = 0;
     closeSettingPicker();
     applyPendingLyricsRefresh();
   }
@@ -1506,21 +1795,66 @@ function openPolicyLinkInSystemBrowser(event) {
 
 function ensureLanguageChangeReload(event) {
   const target = event.target instanceof Element ? event.target : null;
-  const option = target?.closest('ytmusic-setting-single-option-menu-renderer .menu-item');
+  const menuOption = target?.closest(
+    '.menu-item, ytmusic-menu-navigation-item-renderer, ytmusic-menu-service-item-renderer'
+  );
+  if (menuOption && performance.now() < pendingLanguageMenuUntil
+    && menuOption.getAttribute('aria-selected') !== 'true') {
+    pendingLanguageMenuUntil = 0;
+    window.clearTimeout(languageReloadTimer);
+    languageReloadTimer = window.setTimeout(
+      () => ipcRenderer.send('music:language-changed'),
+      1600
+    );
+    return;
+  }
+
+  const renderer = target?.closest('ytmusic-setting-single-option-menu-renderer');
+  if (renderer) {
+    const settingsPage = renderer.closest('ytmusic-settings-page');
+    const optionMenus = settingsPage
+      ? [...settingsPage.querySelectorAll('ytmusic-setting-single-option-menu-renderer')]
+      : [];
+    const label = [
+      renderer.getAttribute('aria-label'),
+      renderer.querySelector('#title, .title, .label')?.textContent,
+      renderer.textContent
+    ].filter(Boolean).join(' ');
+    const languageLabel = /(?:\blanguage\b|语言|語言|言語|언어|idioma|langue|sprache|lingua|язык|taal|język|dil|bahasa)/iu
+      .test(label);
+    if (languageLabel || (optionMenus.length >= 2 && renderer === optionMenus.at(-1))) {
+      pendingLanguageMenuUntil = performance.now() + 30000;
+    }
+    return;
+  }
+
+  if (performance.now() >= pendingLanguageMenuUntil) {
+    pendingLanguageMenuUntil = 0;
+    return;
+  }
+
+  const option = target?.closest('tp-yt-paper-item');
   if (!option || option.getAttribute('aria-selected') === 'true') {
     return;
   }
 
-  const renderer = option.closest('ytmusic-setting-single-option-menu-renderer');
-  const settingsPage = renderer?.closest('ytmusic-settings-page');
-  const optionMenus = settingsPage
-    ? [...settingsPage.querySelectorAll('ytmusic-setting-single-option-menu-renderer')]
-    : [];
-  if (optionMenus.length < 2 || renderer !== optionMenus.at(-1)) {
+  pendingLanguageMenuUntil = 0;
+  window.clearTimeout(languageReloadTimer);
+  languageReloadTimer = window.setTimeout(
+    () => ipcRenderer.send('music:language-changed'),
+    1600
+  );
+}
+
+function interceptReloadShortcut(event) {
+  const reload = event.key === 'F5'
+    || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'r');
+  if (!reload || event.altKey) {
     return;
   }
-
-  window.setTimeout(() => window.location.reload(), 1400);
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  ipcRenderer.send('music:reload');
 }
 
 function createButton(action, label, icon) {
@@ -1684,7 +2018,6 @@ function showMaterialContextMenu(event) {
   if (!target) {
     return;
   }
-
   event.preventDefault();
   event.stopPropagation();
   if (target.closest(`#${CONTROL_ID}, #${CLOSE_DIALOG_ID}, #${CONTEXT_MENU_ID}`)) {
@@ -1697,20 +2030,21 @@ function showMaterialContextMenu(event) {
   const hasSelection = Boolean(window.getSelection()?.toString().trim());
   const anchor = target.closest('a[href]');
   const linkUrl = anchor?.href || '';
+  const strings = getAppearanceStrings();
   const items = [];
 
   if (editable) {
     items.push(
-      { action: 'undo', label: '撤销', icon: 'undo' },
-      { action: 'redo', label: '重做', icon: 'redo' },
+      { action: 'undo', label: strings.contextUndo, icon: 'undo' },
+      { action: 'redo', label: strings.contextRedo, icon: 'redo' },
       { separator: true },
-      { action: 'cut', label: '剪切', icon: 'cut' },
-      { action: 'copy', label: '复制', icon: 'copy' },
-      { action: 'paste', label: '粘贴', icon: 'paste' },
-      { action: 'select-all', label: '全选', icon: 'selectAll' }
+      { action: 'cut', label: strings.contextCut, icon: 'cut' },
+      { action: 'copy', label: strings.contextCopy, icon: 'copy' },
+      { action: 'paste', label: strings.contextPaste, icon: 'paste' },
+      { action: 'select-all', label: strings.contextSelectAll, icon: 'selectAll' }
     );
   } else if (hasSelection) {
-    items.push({ action: 'copy', label: '复制', icon: 'copy' });
+    items.push({ action: 'copy', label: strings.contextCopy, icon: 'copy' });
   }
 
   if (linkUrl) {
@@ -1718,15 +2052,15 @@ function showMaterialContextMenu(event) {
       items.push({ separator: true });
     }
     items.push(
-      { action: 'open-link', label: '在浏览器中打开链接', icon: 'external', usesLink: true },
-      { action: 'copy-link', label: '复制链接', icon: 'link', usesLink: true }
+      { action: 'open-link', label: strings.contextOpenLink, icon: 'external', usesLink: true },
+      { action: 'copy-link', label: strings.contextCopyLink, icon: 'link', usesLink: true }
     );
   }
 
   if (items.length) {
     items.push({ separator: true });
   }
-  items.push({ action: 'reload', label: '重新加载', icon: 'reload' });
+  items.push({ action: 'reload', label: strings.contextReload, icon: 'reload' });
 
   const menu = document.createElement('div');
   menu.id = CONTEXT_MENU_ID;
@@ -1817,22 +2151,19 @@ function getLyricsPlaybackState() {
   };
 }
 
-function seekLyricsPlayback(time) {
-  const player = getYouTubePlayer();
-  try {
-    if (typeof player?.seekTo === 'function') {
-      player.seekTo(Math.max(0, time), true);
-      return true;
-    }
-  } catch {
-    // Fall back to the current player media element below.
-  }
-  const media = getActiveMediaElement(player);
-  if (!media) {
+function seekLyricsPlayback(time, expectedVideoId) {
+  if (!expectedVideoId || currentPlaybackSnapshot?.videoId !== expectedVideoId) {
     return false;
   }
-  media.currentTime = Math.max(0, time);
-  return true;
+  try {
+    return contextBridge.executeInMainWorld({
+      args: [expectedVideoId, Math.max(0, time)],
+      func: seekPagePlayback
+    }) === true;
+  } catch (error) {
+    console.warn('Unable to seek the current lyrics track:', error.message);
+    return false;
+  }
 }
 
 function collectPlaybackSnapshot() {
@@ -1972,6 +2303,11 @@ function pollPlayback() {
     if (!sample) {
       document.documentElement.dataset.ytmDesktopSongState = 'waiting-for-track';
       return;
+    }
+    if (currentPlaybackSnapshot?.videoId
+      && currentPlaybackSnapshot.videoId !== sample.videoId
+      && currentLyricsTrack?.videoId !== sample.videoId) {
+      handleDetectedTrackChange(sample);
     }
     const observation = songStateMonitor.observe({
       durationHint: sample.durationHint,
@@ -2146,6 +2482,27 @@ function createLyricsPanel() {
   return panel;
 }
 
+function getLyricsPanels() {
+  return [...document.querySelectorAll(`#${LYRICS_PANEL_ID}`)];
+}
+
+function getCurrentLyricsPanel() {
+  const panels = getLyricsPanels();
+  const pageIsVisible = (panel) => {
+    const page = panel.closest('ytmusic-player-page');
+    if (!page) {
+      return false;
+    }
+    const bounds = page.getBoundingClientRect();
+    return bounds.width > 0 && bounds.height > 0;
+  };
+  return panels.find((panel) => panel.dataset.active === 'true' && pageIsVisible(panel))
+    || panels.find(pageIsVisible)
+    || panels.find((panel) => panel.dataset.active === 'true')
+    || panels.at(-1)
+    || null;
+}
+
 function setBoundedLyricsCache(map, key, value, limit) {
   map.delete(key);
   map.set(key, value);
@@ -2154,7 +2511,7 @@ function setBoundedLyricsCache(map, key, value, limit) {
   }
 }
 
-function publishDesktopLyricsState(panel = document.getElementById(LYRICS_PANEL_ID)) {
+function publishDesktopLyricsState(panel = getCurrentLyricsPanel()) {
   if (!currentLyricsResult?.lines?.length || !currentLyricsTrack) {
     ipcRenderer.send('desktop-lyrics:clear');
     return;
@@ -2186,6 +2543,8 @@ function resetLyricsTranslation(panel, hideButton = false) {
   lyricsTranslationRequestToken += 1;
   panel.dataset.translated = 'false';
   panel.dataset.translationMode = 'none';
+  delete panel.dataset.translationProvider;
+  delete panel.dataset.translationInputSource;
   const strings = getAppearanceStrings();
   const button = panel.querySelector('.ytm-desktop-lyrics-translate');
   button.hidden = hideButton;
@@ -2201,13 +2560,15 @@ function applyLyricsTranslation(
   panel,
   translatedLines,
   mode = 'manual',
-  translationSource = getAppearanceStrings().translationSource
+  translationProvider = appearanceSettings.lyricsTranslationProvider,
+  translationInputSource = 'original'
 ) {
   const lineElements = [...panel.querySelectorAll('.ytm-desktop-lyrics-line')];
   const translated = Array.isArray(translatedLines) && translatedLines.length === lineElements.length;
   for (const [index, element] of lineElements.entries()) {
     const translation = element.querySelector('.ytm-desktop-lyrics-line-translation');
-    translation.textContent = translated ? translatedLines[index] || '' : '';
+    const metadataLine = isLyricsMetadataLine(element.dataset.originalText);
+    translation.textContent = translated && !metadataLine ? translatedLines[index] || '' : '';
     translation.hidden = !translated || !translation.textContent;
   }
 
@@ -2216,9 +2577,14 @@ function applyLyricsTranslation(
   const button = panel.querySelector('.ytm-desktop-lyrics-translate');
   panel.dataset.translated = String(translated);
   panel.dataset.translationMode = translated ? mode : 'none';
-  source.textContent = translated
-    ? `${source.dataset.originalText} · ${translationSource}`
-    : source.dataset.originalText;
+  if (translated) {
+    panel.dataset.translationProvider = translationProvider;
+    panel.dataset.translationInputSource = translationInputSource;
+  } else {
+    delete panel.dataset.translationProvider;
+    delete panel.dataset.translationInputSource;
+  }
+  source.textContent = getLyricsSourceAttribution(panel, source.dataset.originalText, strings);
   button.classList.toggle('active', translated);
   button.title = translated ? strings.showOriginalLyrics : strings.translateLyrics;
   button.setAttribute('aria-label', button.title);
@@ -2259,14 +2625,14 @@ async function toggleLyricsTranslation(panel, automatic = false) {
   }
   const targetLanguage = normalizeTranslationLanguage(document.documentElement.lang);
   const timelineKey = panel.dataset.timelineKey || '';
-  const cacheKey = `${timelineKey}\0${targetLanguage}`;
+  const timelineLines = lineElements.map((element) => ({
+    text: element.dataset.originalText,
+    time: Number(element.dataset.time)
+  }));
   const embeddedTranslation = currentLyricsResult?.source === 'netease'
-    && targetLanguage.toLowerCase().startsWith('zh')
+    && targetLanguage === 'zh-CN'
     ? alignSyncedTranslation(
-      lineElements.map((element) => ({
-        text: element.dataset.originalText,
-        time: Number(element.dataset.time)
-      })),
+      timelineLines,
       currentLyricsResult.translationLyrics
     )
     : null;
@@ -2275,16 +2641,37 @@ async function toggleLyricsTranslation(panel, automatic = false) {
       panel,
       embeddedTranslation,
       automatic ? 'auto' : 'manual',
-      getAppearanceStrings().neteaseTranslationSource
+      'netease'
     );
     return true;
   }
+  const translationSource = selectLyricsTranslationSource(
+    timelineLines,
+    currentLyricsResult?.translationLyrics,
+    appearanceSettings.neteaseTranslationSource
+      && appearanceSettings.lrclibLyrics
+      && appearanceSettings.neteaseLyrics
+      && currentLyricsResult?.source === 'netease'
+      && normalizeUiLocale(document.documentElement.lang) !== 'zh-cn'
+  );
+  const cacheKey = [
+    timelineKey,
+    targetLanguage,
+    appearanceSettings.lyricsTranslationProvider,
+    translationSource.kind
+  ].join('\0');
   const cached = lyricsTranslationCache.get(cacheKey);
   if (cached) {
     if (automatic && haveSameLanguage(cached.sourceLanguage, targetLanguage)) {
       return true;
     }
-    applyLyricsTranslation(panel, cached.lines, automatic ? 'auto' : 'manual');
+    applyLyricsTranslation(
+      panel,
+      cached.lines,
+      automatic ? 'auto' : 'manual',
+      cached.provider,
+      translationSource.kind
+    );
     return true;
   }
 
@@ -2297,7 +2684,10 @@ async function toggleLyricsTranslation(panel, automatic = false) {
   button.setAttribute('aria-label', strings.translatingLyrics);
   button.setAttribute('aria-busy', 'true');
   try {
-    const result = await ipcRenderer.invoke('lyrics:translate', { lines, targetLanguage });
+    const result = await ipcRenderer.invoke('lyrics:translate', {
+      lines: translationSource.lines,
+      targetLanguage
+    });
     if (requestToken !== lyricsTranslationRequestToken
       || panel.dataset.timelineKey !== timelineKey
       || !Array.isArray(result?.lines)
@@ -2308,7 +2698,13 @@ async function toggleLyricsTranslation(panel, automatic = false) {
     if (automatic && haveSameLanguage(result.sourceLanguage, targetLanguage)) {
       return true;
     }
-    applyLyricsTranslation(panel, result.lines, automatic ? 'auto' : 'manual');
+    applyLyricsTranslation(
+      panel,
+      result.lines,
+      automatic ? 'auto' : 'manual',
+      result.provider,
+      translationSource.kind
+    );
     return true;
   } catch (error) {
     console.warn('Unable to translate lyrics:', error.message);
@@ -2354,7 +2750,7 @@ async function maybeAutoTranslateLyrics(panel) {
 }
 
 function refreshAutomaticLyricsTranslation() {
-  const panel = document.getElementById(LYRICS_PANEL_ID);
+  const panel = getCurrentLyricsPanel();
   if (!panel) {
     return;
   }
@@ -2419,6 +2815,7 @@ function renderLyricsResult(panel, result, timelineKey) {
     ? strings.neteaseSource
     : result.source === 'youtube-cc' ? strings.captionSource : strings.lyricsSource;
   panel.dataset.timelineKey = timelineKey;
+  panel.dataset.lyricsVideoId = String(currentLyricsTrack?.videoId || '');
   currentLyricsResult = result;
   renderTimedLyrics(panel, result.lines, sourceText);
 }
@@ -2431,6 +2828,9 @@ function renderTimedLyrics(panel, lines, sourceText) {
     setLyricsStatus(panel, getAppearanceStrings().lyricsNotFound);
     return;
   }
+
+  const renderedTimelineKey = panel.dataset.timelineKey || '';
+  const renderedVideoId = panel.dataset.lyricsVideoId || '';
 
   const fragment = document.createDocumentFragment();
   for (const line of lines) {
@@ -2455,9 +2855,24 @@ function renderTimedLyrics(panel, lines, sourceText) {
     translation.hidden = true;
     button.append(original, translation);
     button.addEventListener('click', () => {
-      if (seekLyricsPlayback(line.time)) {
+      const timelineIsCurrent = canSeekLyricsTimeline({
+        currentKey: currentLyricsKey,
+        currentState: currentLyricsState,
+        currentVideoId: currentPlaybackSnapshot?.videoId,
+        expectedKey: renderedTimelineKey,
+        expectedVideoId: renderedVideoId,
+        lyricsVideoId: currentLyricsTrack?.videoId
+      });
+      if (!timelineIsCurrent) {
+        setLyricsStatus(panel, getAppearanceStrings().lyricsLoading, true);
+        requestPlaybackPoll();
+        return;
+      }
+      if (seekLyricsPlayback(line.time, renderedVideoId)) {
         lyricsUserScrollUntil = 0;
         updateSyncedLyrics();
+      } else {
+        requestPlaybackPoll();
       }
     });
     fragment.appendChild(button);
@@ -2485,12 +2900,12 @@ function renderTimedLyrics(panel, lines, sourceText) {
 }
 
 function updateSyncedLyrics() {
-  const panel = document.querySelector(`#${LYRICS_PANEL_ID}:not([hidden])`);
+  const panel = getCurrentLyricsPanel();
   const playback = getLyricsPlaybackState();
   const lineElements = panel
     ? [...panel.querySelectorAll('.ytm-desktop-lyrics-line, .ytm-desktop-lyrics-spacer')]
     : [];
-  if (!panel || !playback || !lineElements.length) {
+  if (!panel || panel.hidden || !playback || !lineElements.length) {
     return;
   }
 
@@ -2541,18 +2956,29 @@ function handleDetectedTrackChange(snapshot) {
   currentLyricsIndex = -1;
   currentLyricsResult = null;
   currentLyricsTrack = snapshot.track;
+  lyricsRetryAt = 0;
+  lyricsRetryAttempted = false;
+  lyricsRetryKey = '';
+  stopLyricsSync();
   forceLyricsRefreshKey = appearanceSettings.lrclibLyrics
     ? getLyricsTrackFingerprint(snapshot.track)
     : '';
   ipcRenderer.send('desktop-lyrics:clear');
-  const panel = document.getElementById(LYRICS_PANEL_ID);
-  if (panel && appearanceSettings.lrclibLyrics) {
-    setLyricsStatus(panel, getAppearanceStrings().lyricsLoading, true);
+  for (const panel of getLyricsPanels()) {
+    panel.dataset.timelineKey = '';
+    panel.dataset.lyricsVideoId = String(snapshot.track?.videoId || snapshot.videoId || '');
+    delete panel.dataset.autoTranslationChecked;
+    if (appearanceSettings.lrclibLyrics) {
+      setLyricsStatus(panel, getAppearanceStrings().lyricsLoading, true);
+    } else {
+      panel.querySelector('.ytm-desktop-lyrics-lines')?.replaceChildren();
+      resetLyricsTranslation(panel, true);
+    }
   }
 }
 
 async function loadLyricsForCurrentTrack() {
-  const panel = document.getElementById(LYRICS_PANEL_ID);
+  const panel = getCurrentLyricsPanel();
   if (!appearanceSettings.lrclibLyrics) {
     currentLyricsResult = null;
     currentLyricsTrack = null;
@@ -2571,6 +2997,10 @@ async function loadLyricsForCurrentTrack() {
     language: document.documentElement.lang.toLowerCase(),
     netease: appearanceSettings.neteaseLyrics
   });
+  const retrying = key === currentLyricsKey
+    && ['empty', 'error'].includes(currentLyricsState)
+    && !lyricsRetryAttempted
+    && Date.now() >= lyricsRetryAt;
   if (key === currentLyricsKey && currentLyricsState === 'loading') {
     return;
   }
@@ -2580,8 +3010,17 @@ async function loadLyricsForCurrentTrack() {
     }
     return;
   }
+  if (key === currentLyricsKey && ['empty', 'error'].includes(currentLyricsState)
+    && !retrying) {
+    return;
+  }
   if (key !== currentLyricsKey) {
     lyricsRequestToken += 1;
+    lyricsRetryAt = 0;
+    lyricsRetryAttempted = false;
+    lyricsRetryKey = key;
+  } else if (retrying) {
+    lyricsRetryAttempted = true;
   }
   currentLyricsKey = key;
   currentLyricsState = 'loading';
@@ -2590,7 +3029,7 @@ async function loadLyricsForCurrentTrack() {
   currentLyricsIndex = -1;
   ipcRenderer.send('desktop-lyrics:clear');
   const requestToken = ++lyricsRequestToken;
-  const forceRefresh = forceLyricsRefreshKey === trackFingerprint;
+  const forceRefresh = forceLyricsRefreshKey === trackFingerprint || retrying;
   if (forceRefresh) {
     forceLyricsRefreshKey = '';
   }
@@ -2620,8 +3059,12 @@ async function loadLyricsForCurrentTrack() {
       if (panel) {
         setLyricsStatus(panel, getAppearanceStrings().lyricsNotFound);
       }
+      if (!lyricsRetryAttempted && lyricsRetryKey === key) {
+        lyricsRetryAt = Date.now() + 1500;
+      }
       return;
     }
+    lyricsRetryAt = 0;
     currentLyricsState = 'ready';
     currentLyricsResult = result;
     currentLyricsTrack = track;
@@ -2638,6 +3081,9 @@ async function loadLyricsForCurrentTrack() {
       ipcRenderer.send('desktop-lyrics:clear');
       if (panel) {
         setLyricsStatus(panel, getAppearanceStrings().lyricsError);
+      }
+      if (!lyricsRetryAttempted && lyricsRetryKey === key) {
+        lyricsRetryAt = Date.now() + 4000;
       }
     }
   }
@@ -2656,8 +3102,14 @@ function requestLyricsRefresh() {
     language: document.documentElement.lang.toLowerCase(),
     netease: appearanceSettings.neteaseLyrics
   });
-  if (key === currentLyricsKey && ['loading', 'ready', 'empty', 'error'].includes(currentLyricsState)) {
-    return;
+  if (key === currentLyricsKey) {
+    if (['loading', 'ready'].includes(currentLyricsState)) {
+      return;
+    }
+    if (['empty', 'error'].includes(currentLyricsState)
+      && (lyricsRetryAttempted || Date.now() < lyricsRetryAt)) {
+      return;
+    }
   }
   window.queueMicrotask(loadLyricsForCurrentTrack);
 }
@@ -2783,6 +3235,9 @@ function refreshLyricsIntegration() {
   } else {
     stopLyricsSync();
     forceLyricsRefreshKey = '';
+    lyricsRetryAt = 0;
+    lyricsRetryAttempted = false;
+    lyricsRetryKey = '';
     lyricsRequestToken += 1;
     currentLyricsKey = '';
     currentLyricsState = 'idle';
@@ -2925,14 +3380,15 @@ function installWindowControls() {
   bindVolumeWheelControl();
 
   if (!document.getElementById(CONTROL_ID)) {
+    const strings = getAppearanceStrings();
     const controls = document.createElement('div');
     controls.id = CONTROL_ID;
     controls.setAttribute('role', 'group');
-    controls.setAttribute('aria-label', '窗口控制');
+    controls.setAttribute('aria-label', strings.windowControls);
     controls.append(
-      createButton('minimize', '最小化', icons.minimize),
-      createButton('toggle-maximize', '最大化', icons.maximize),
-      createButton('close', '关闭', icons.close)
+      createButton('minimize', strings.minimize, icons.minimize),
+      createButton('toggle-maximize', strings.maximize, icons.maximize),
+      createButton('close', strings.close, icons.close)
     );
     document.body.appendChild(controls);
     ipcRenderer.send('window:get-state');
@@ -2947,6 +3403,7 @@ function installWindowControls() {
 }
 
 function watchPage() {
+  installLanguageMonitor();
   installWindowControls();
   installPlaybackMonitor();
   installSurfaceAnimations();
@@ -2956,18 +3413,21 @@ function watchPage() {
     .then(applyAppearanceSettings)
     .catch((error) => console.warn('Unable to read appearance settings:', error.message));
   document.addEventListener('pointerdown', rememberSettingsTouchSelection, true);
+  document.addEventListener('pointerup', activateTouchedSettingsSelection, true);
   document.addEventListener('pointerdown', (event) => {
     const picker = document.getElementById(SETTING_PICKER_ID);
     if (picker && !picker.contains(event.target) && !picker._trigger?.contains(event.target)) {
       closeSettingPicker();
     }
   }, true);
-  document.addEventListener('scroll', () => closeSettingPicker(), true);
+  document.addEventListener('scroll', closeSettingPickerOnSettingsScroll, true);
+  document.addEventListener('click', suppressSynthesizedSettingsClick, true);
   document.addEventListener('click', openPolicyLinkInSystemBrowser, true);
   document.addEventListener('click', interceptNativeSettingsCategoryClick, true);
   document.addEventListener('click', interceptSettingsClose, true);
   document.addEventListener('click', ensureLanguageChangeReload, true);
   document.addEventListener('keydown', interceptSettingsEscape, true);
+  document.addEventListener('keydown', interceptReloadShortcut, true);
   document.addEventListener('contextmenu', showMaterialContextMenu, true);
   document.addEventListener('pointerdown', (event) => {
     if (!event.target.closest?.(`#${CONTEXT_MENU_ID}`)) {
@@ -2975,15 +3435,11 @@ function watchPage() {
     }
   }, true);
   window.addEventListener('blur', closeMaterialContextMenu);
-  window.addEventListener('blur', () => closeSettingPicker());
   window.addEventListener('resize', closeMaterialContextMenu);
   window.addEventListener('resize', () => closeSettingPicker());
   window.addEventListener('resize', refreshSettingsSelectionIndicators, { passive: true });
 
   const observer = new MutationObserver(() => {
-    if (pendingLyricsIntegrationRefresh && !document.querySelector('ytmusic-settings-page')) {
-      applyPendingLyricsRefresh();
-    }
     if (!document.getElementById(CONTROL_ID)) {
       installWindowControls();
     }
@@ -3008,13 +3464,15 @@ function watchPage() {
 }
 
 ipcRenderer.on('window:maximized', (_event, isMaximized) => {
+  windowIsMaximized = isMaximized;
   const button = document.querySelector('.ytm-desktop-toggle-maximize');
   if (!button) {
     return;
   }
 
   button.replaceChildren(createIcon(isMaximized ? icons.restore : icons.maximize));
-  button.title = isMaximized ? '还原' : '最大化';
+  const strings = getAppearanceStrings();
+  button.title = isMaximized ? strings.restore : strings.maximize;
   button.setAttribute('aria-label', button.title);
 });
 

@@ -164,11 +164,39 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
       }
     }
 
-    const ranked = rankLyricsCandidates([...candidates.values()], hints, 70, {
+    let ranked = rankLyricsCandidates([...candidates.values()], hints, 70, {
       allowTitleDurationMatch: true,
       durationToleranceSeconds: 35,
       requireSyncedLyrics: false
     });
+    if (!ranked.length) {
+      for (const title of (hints.titles || []).slice(0, 2)) {
+        const query = new URLSearchParams({
+          limit: '30',
+          offset: '0',
+          s: title,
+          type: '1'
+        });
+        const response = await requestJson(`https://music.163.com/api/cloudsearch/pc?${query}`, {
+          headers: requestHeaders('netease'),
+          timeoutMs: 10000
+        });
+        for (const song of Array.isArray(response?.result?.songs) ? response.result.songs : []) {
+          const candidate = formatNeteaseCandidate(song);
+          if (candidate.id) {
+            candidates.set(candidate.id, candidate);
+          }
+        }
+        ranked = rankLyricsCandidates([...candidates.values()], hints, 70, {
+          allowTitleDurationMatch: true,
+          durationToleranceSeconds: 35,
+          requireSyncedLyrics: false
+        });
+        if (ranked.length) {
+          break;
+        }
+      }
+    }
     for (const match of ranked.slice(0, 4)) {
       const query = new URLSearchParams({
         id: String(match.candidate.id),
@@ -262,6 +290,7 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
         caption?.languageCode,
         caption?.kind
       ]),
+      musicVideo: track?.isMusicVideo === true,
       netease: options.neteaseEnabled === true,
       track: createLyricsLookupCacheKey(hints)
     });
@@ -276,15 +305,19 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
     }
 
     const request = (async () => {
-      const providers = canSearchProviders && options.neteaseEnabled === true
+      const configuredProviders = canSearchProviders && options.neteaseEnabled === true
         ? [
           { lookup: lookupNetease, name: 'netease' },
           { lookup: lookupLrclib, name: 'lrclib' }
         ]
         : canSearchProviders ? [{ lookup: lookupLrclib, name: 'lrclib' }] : [];
-      if (hasCaptions) {
-        providers.push({ lookup: lookupYoutubeCaptions, name: 'youtube-cc' });
-      }
+      const captionProvider = { lookup: lookupYoutubeCaptions, name: 'youtube-cc' };
+      const providers = track?.isMusicVideo === true && hasCaptions
+        ? [captionProvider, ...configuredProviders]
+        : [
+          ...configuredProviders,
+          ...(hasCaptions ? [captionProvider] : [])
+        ];
       const providerAttempts = [];
       let successfulProviders = 0;
       let lastError = null;

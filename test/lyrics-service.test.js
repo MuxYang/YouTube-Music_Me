@@ -175,7 +175,51 @@ test('accepts a NetEase title-duration match when YouTube localizes the artist',
   assert.deepEqual(result.providerAttempts, ['netease']);
 });
 
-test('uses YouTube CC when configured lyrics providers have no result', async () => {
+test('retries NetEase with the title alone when artist-qualified searches miss', async () => {
+  const searches = [];
+  const service = createLyricsService({
+    requestJson: async (url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === '/api/cloudsearch/pc') {
+        const search = parsed.searchParams.get('s');
+        searches.push(search);
+        if (search === '春めく') {
+          return {
+            result: {
+              songs: [{
+                al: { name: '春めく' },
+                ar: [{ alias: ['Nanatsukaze'], name: 'ナナツカゼ' }],
+                dt: 185500,
+                id: 2043976339,
+                name: '春めく'
+              }]
+            }
+          };
+        }
+        return { result: { songs: [] } };
+      }
+      if (parsed.pathname === '/api/song/lyric') {
+        return { lrc: { lyric: '[00:01.00]春の歌詞' } };
+      }
+      return [];
+    }
+  });
+
+  const result = await service.resolve({
+    artist: 'Nanatsukaze',
+    duration: 185.5,
+    title: '春めく',
+    videoId: 'harumeku'
+  }, { syncEnabled: true, neteaseEnabled: true });
+
+  assert.equal(result.source, 'netease');
+  assert.equal(result.id, 2043976339);
+  assert.equal(result.artistName, 'ナナツカゼ');
+  assert.equal(searches.some((search) => search.includes('Nanatsukaze')), true);
+  assert.equal(searches.at(-1), '春めく');
+});
+
+test('uses YouTube CC before configured providers for a music video', async () => {
   const calls = [];
   const service = createLyricsService({
     requestJson: async (url) => {
@@ -204,7 +248,43 @@ test('uses YouTube CC when configured lyrics providers have no result', async ()
     language: 'en-US'
   }, { syncEnabled: true, neteaseEnabled: false });
   assert.equal(result.source, 'youtube-cc');
-  assert.deepEqual(result.providerAttempts, ['lrclib', 'youtube-cc']);
+  assert.deepEqual(result.providerAttempts, ['youtube-cc']);
   assert.match(result.syncedLyrics, /\[00:01\.250\]Caption line/);
+  assert.equal(calls.length, 1);
   assert.equal(new URL(calls.at(-1)).searchParams.get('fmt'), 'json3');
+});
+
+test('falls back from music-video CC to NetEase and then LRCLIB', async () => {
+  const hosts = [];
+  const service = createLyricsService({
+    requestJson: async (url) => {
+      const parsed = new URL(url);
+      hosts.push(parsed.hostname);
+      if (parsed.hostname.endsWith('youtube.com')) {
+        return { events: [] };
+      }
+      if (parsed.pathname === '/api/cloudsearch/pc') {
+        return neteaseSearchMatch;
+      }
+      if (parsed.pathname === '/api/song/lyric') {
+        return { lrc: { lyric: '[00:01.00]NetEase fallback line' } };
+      }
+      return lrclibMatch;
+    }
+  });
+  const result = await service.resolve({
+    ...track,
+    captionTracks: [{
+      baseUrl: 'https://www.youtube.com/api/timedtext?v=video-1&lang=en',
+      kind: '',
+      languageCode: 'en',
+      vssId: '.en'
+    }],
+    isMusicVideo: true,
+    language: 'en-US'
+  }, { syncEnabled: true, neteaseEnabled: true });
+  assert.equal(result.source, 'netease');
+  assert.deepEqual(result.providerAttempts, ['youtube-cc', 'netease']);
+  assert.equal(hosts[0], 'www.youtube.com');
+  assert.equal(hosts.slice(1).every((host) => host === 'music.163.com'), true);
 });

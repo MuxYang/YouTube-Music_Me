@@ -320,6 +320,11 @@ function parseSyncedLyrics(value) {
     .sort((left, right) => left.time - right.time);
 }
 
+function isLyricsMetadataLine(value) {
+  return /^\s*(?:作词|作詞|作曲|编曲|編曲|填词|填詞|词|詞|曲|歌手|演唱|翻唱|混音|母带|母帶|制作|製作|歌词|歌詞|翻译|翻譯|翻訳|lyrics?|lyricist|composer|arranger|vocal|vocals|mix(?:ed)?|master(?:ed)?|producer)\s*[:：]/iu
+    .test(String(value || ''));
+}
+
 function alignSyncedTranslation(originalLines, translatedLyrics, toleranceSeconds = 1.5) {
   const originals = (Array.isArray(originalLines) ? originalLines : [])
     .filter((line) => line && String(line.text || '').trim());
@@ -329,34 +334,82 @@ function alignSyncedTranslation(originalLines, translatedLyrics, toleranceSecond
     return null;
   }
 
-  const used = new Set();
+  const eligibleCount = originals.filter((line) => !isLyricsMetadataLine(line.text)).length;
+  if (!eligibleCount) {
+    return null;
+  }
+
+  let cursor = 0;
   let matched = 0;
   const aligned = originals.map((line) => {
+    if (isLyricsMetadataLine(line.text)) {
+      return '';
+    }
     const time = Number(line.time);
     let bestIndex = -1;
     let bestDistance = Number.POSITIVE_INFINITY;
-    for (const [index, translation] of translations.entries()) {
-      if (used.has(index)) {
-        continue;
+    while (cursor < translations.length
+      && translations[cursor].time < time - toleranceSeconds) {
+      cursor += 1;
+    }
+    for (let index = cursor; index < translations.length; index += 1) {
+      const translation = translations[index];
+      if (translation.time > time + toleranceSeconds) {
+        break;
       }
       const distance = Math.abs(translation.time - time);
       if (distance < bestDistance) {
         bestIndex = index;
         bestDistance = distance;
       }
-      if (translation.time > time + toleranceSeconds) {
-        break;
-      }
     }
     if (bestIndex < 0 || bestDistance > toleranceSeconds) {
       return '';
     }
-    used.add(bestIndex);
+    cursor = bestIndex + 1;
     matched += 1;
     return translations[bestIndex].text;
   });
 
-  return matched >= Math.max(1, Math.ceil(originals.length * 0.6)) ? aligned : null;
+  return matched >= Math.max(1, Math.ceil(eligibleCount * 0.6)) ? aligned : null;
+}
+
+function selectLyricsTranslationSource(originalLines, translatedLyrics, enabled = false) {
+  const originals = (Array.isArray(originalLines) ? originalLines : [])
+    .map((line) => String(line?.text || '').trim());
+  if (!enabled || !originals.length || originals.some((line) => !line)) {
+    return { kind: 'original', lines: originals };
+  }
+  const aligned = alignSyncedTranslation(originalLines, translatedLyrics);
+  if (!aligned || aligned.length !== originals.length) {
+    return { kind: 'original', lines: originals };
+  }
+  const incomplete = aligned.some((line, index) => (
+    !isLyricsMetadataLine(originals[index]) && !line
+  ));
+  if (incomplete) {
+    return { kind: 'original', lines: originals };
+  }
+  return {
+    kind: 'netease-zh',
+    lines: aligned.map((line, index) => line || originals[index])
+  };
+}
+
+function canSeekLyricsTimeline({
+  currentKey,
+  currentState,
+  currentVideoId,
+  expectedKey,
+  expectedVideoId,
+  lyricsVideoId
+} = {}) {
+  return currentState === 'ready'
+    && Boolean(expectedKey)
+    && Boolean(expectedVideoId)
+    && expectedKey === currentKey
+    && expectedVideoId === currentVideoId
+    && expectedVideoId === lyricsVideoId;
 }
 
 function normalizeTranslationLanguage(value) {
@@ -373,15 +426,18 @@ function normalizeTranslationLanguage(value) {
 module.exports = {
   alignSyncedTranslation,
   buildLyricsSearchHints,
+  canSeekLyricsTimeline,
   containsJapanese,
   createLyricsLookupCacheKey,
   isLikelyRomanizedLyrics,
+  isLyricsMetadataLine,
   normalizeComparable,
   normalizeTranslationLanguage,
   parseClockDuration,
   parseSyncedLyrics,
   rankLyricsCandidates,
   scoreLyricsCandidate,
+  selectLyricsTranslationSource,
   selectLyricsSearchPairs,
   selectBestLyricsCandidate,
   stripPresentationNoise,

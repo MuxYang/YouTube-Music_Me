@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube Music Me</title>
+  <link rel="stylesheet" href="deepl-config.css">
+</head>
+<body>
+  <main>
+    <h1 id="title"></h1>
+    <p id="description"></p>
+    <form id="form" novalidate>
+      <label id="key-label" for="key"></label>
+      <input id="key" type="password" autocomplete="new-password" maxlength="200" spellcheck="false">
+      <p id="error" role="alert" hidden></p>
+      <div class="actions">
+        <button id="cancel" type="button"></button>
+        <button id="save" type="submit" class="primary"></button>
+      </div>
+    </form>
+  </main>
+  <script src="deepl-config.js"></script>
+</body>
+</html>

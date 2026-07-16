@@ -5,14 +5,32 @@ const assert = require('node:assert/strict');
 const {
   alignSyncedTranslation,
   buildLyricsSearchHints,
+  canSeekLyricsTimeline,
   createLyricsLookupCacheKey,
   isLikelyRomanizedLyrics,
+  isLyricsMetadataLine,
   normalizeTranslationLanguage,
   parseClockDuration,
   parseSyncedLyrics,
+  selectLyricsTranslationSource,
   selectLyricsSearchPairs,
   selectBestLyricsCandidate
 } = require('../src/lyrics');
+
+test('allows lyrics seeking only for the rendered current track', () => {
+  const current = {
+    currentKey: 'track-key',
+    currentState: 'ready',
+    currentVideoId: 'video-2',
+    expectedKey: 'track-key',
+    expectedVideoId: 'video-2',
+    lyricsVideoId: 'video-2'
+  };
+  assert.equal(canSeekLyricsTimeline(current), true);
+  assert.equal(canSeekLyricsTimeline({ ...current, expectedVideoId: 'video-1' }), false);
+  assert.equal(canSeekLyricsTimeline({ ...current, expectedKey: 'previous-key' }), false);
+  assert.equal(canSeekLyricsTimeline({ ...current, currentState: 'loading' }), false);
+});
 
 test('parses and aligns a provider translation by lyrics timestamps', () => {
   assert.deepEqual(parseSyncedLyrics('[00:01.20]First\n[00:03.450]Second'), [
@@ -33,6 +51,57 @@ test('parses and aligns a provider translation by lyrics timestamps', () => {
     { text: 'Two', time: 3 },
     { text: 'Three', time: 5 }
   ], '[00:20.00]Unrelated'), null);
+});
+
+test('does not insert provider translations into lyric credit lines', () => {
+  assert.equal(isLyricsMetadataLine('作詞：Reol'), true);
+  assert.equal(isLyricsMetadataLine('Composer: Reol'), true);
+  assert.deepEqual(alignSyncedTranslation([
+    { text: '作詞：Reol', time: 1 },
+    { text: '作曲：Reol', time: 1 },
+    { text: '「鼓動が止むまで傍にいる」なんて', time: 1 },
+    { text: '違える約束はせず ただあなたといたい', time: 5 }
+  ], '[00:01.00]「直到心跳停止为止都会在你身边」什么的\n[00:05.00]绝不会违背承诺 只是想和你在一起'), [
+    '',
+    '',
+    '「直到心跳停止为止都会在你身边」什么的',
+    '绝不会违背承诺 只是想和你在一起'
+  ]);
+});
+
+test('uses aligned NetEase Chinese lyrics as one translation source timeline', () => {
+  const originalLines = [
+    { text: '作詞：Reol', time: 1 },
+    { text: '原文一', time: 2 },
+    { text: '原文二', time: 5 }
+  ];
+  assert.deepEqual(selectLyricsTranslationSource(
+    originalLines,
+    '[00:02.10]中文一\n[00:05.20]中文二',
+    true
+  ), {
+    kind: 'netease-zh',
+    lines: ['作詞：Reol', '中文一', '中文二']
+  });
+  assert.deepEqual(selectLyricsTranslationSource(
+    originalLines,
+    '[00:30.00]无关歌词',
+    true
+  ), {
+    kind: 'original',
+    lines: ['作詞：Reol', '原文一', '原文二']
+  });
+
+  const partiallyAligned = [
+    { text: '原文一', time: 2 },
+    { text: '原文二', time: 5 },
+    { text: '原文三', time: 8 }
+  ];
+  assert.equal(selectLyricsTranslationSource(
+    partiallyAligned,
+    '[00:02.10]中文一\n[00:05.20]中文二',
+    true
+  ).kind, 'original');
 });
 
 test('builds aliases for bilingual YouTube Music titles', () => {

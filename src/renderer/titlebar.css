@@ -582,6 +582,28 @@ html.ytm-desktop-animations .ytm-desktop-settings-selection.ready {
   opacity: 0.55;
 }
 
+.ytm-desktop-setting-action {
+  appearance: none;
+  background: transparent !important;
+  border: 0;
+  color: #3ea6ff;
+  cursor: pointer;
+  flex: 0 0 auto;
+  font: 500 14px/20px Roboto, Arial, sans-serif;
+  letter-spacing: 0;
+  min-height: 40px;
+  padding: 8px 4px !important;
+}
+
+.ytm-desktop-setting-action:hover {
+  color: #65b8ff;
+}
+
+.ytm-desktop-setting-action:focus-visible {
+  outline: 2px solid #3ea6ff;
+  outline-offset: 2px;
+}
+
 .ytm-desktop-setting-select-row {
   align-items: center;
 }
@@ -610,6 +632,11 @@ html.ytm-desktop-animations .ytm-desktop-settings-selection.ready {
 
 .ytm-desktop-setting-select:hover {
   border-bottom-color: #9aa0a6;
+}
+
+.ytm-desktop-setting-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .ytm-desktop-setting-select:focus,
@@ -1036,5 +1063,67 @@ html.ytm-desktop-animations .ytm-material-dialog-backdrop.closing {
   .ytm-desktop-setting-toggle-track,
   .ytm-desktop-setting-toggle-thumb {
     transition: none;
+  }
+}
+
+@media (pointer: coarse) {
+  html.ytm-desktop-app,
+  html.ytm-desktop-app body {
+    --ytm-desktop-control-size: 48px;
+    --ytm-desktop-controls-width: 156px;
+  }
+
+  #ytm-desktop-window-controls .ytm-desktop-control {
+    flex-basis: 48px;
+    height: 48px;
+    min-width: 48px;
+    touch-action: manipulation;
+    width: 48px;
+  }
+
+  html.ytm-desktop-app ytmusic-settings-page .category-menu-item {
+    box-sizing: border-box;
+    min-height: 52px;
+    touch-action: manipulation;
+  }
+
+  .ytm-desktop-setting-row {
+    min-height: 72px;
+  }
+
+  .ytm-desktop-setting-toggle {
+    flex-basis: 56px;
+    height: 48px;
+    margin-top: -8px;
+    touch-action: manipulation;
+    width: 56px;
+  }
+
+  .ytm-desktop-setting-toggle-track {
+    left: 10px;
+    top: 17px;
+  }
+
+  .ytm-desktop-setting-toggle-thumb {
+    left: 10px;
+    top: 14px;
+  }
+
+  .ytm-desktop-setting-select,
+  .ytm-desktop-setting-action,
+  .ytm-desktop-setting-picker-option,
+  .ytm-material-dialog-action,
+  .ytm-material-menu-item {
+    min-height: 48px;
+    touch-action: manipulation;
+  }
+
+  html.ytm-desktop-app ytmusic-settings-page .close-icon,
+  html.ytm-desktop-app ytmusic-settings-page .close-icon button,
+  html.ytm-desktop-app ytmusic-settings-page .close-icon tp-yt-paper-icon-button {
+    box-sizing: border-box;
+    min-height: 48px;
+    min-width: 48px;
+    touch-action: manipulation;
   }
 }
