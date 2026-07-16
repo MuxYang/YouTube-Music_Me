@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' file:; img-src 'self' file: data:; style-src 'self'; script-src 'self'">
+    <title>YouTube Music Me</title>
+    <link rel="stylesheet" href="splash.css">
+  </head>
+  <body>
+    <main id="splash" class="splash" role="status" aria-label="正在加载 YouTube Music">
+      <div class="splash-stage">
+        <div class="brand-lockup" aria-label="YouTube Music">
+          <span class="brand-mark" aria-hidden="true">
+            <img src="../assets/on_platform_logo_dark.svg" alt="">
+          </span>
+          <span class="brand-word" aria-hidden="true">
+            <img src="../assets/on_platform_logo_dark.svg" alt="">
+          </span>
+        </div>
+
+        <div class="loader-slot" aria-hidden="true">
+          <svg class="material-spinner" viewBox="0 0 48 48">
+            <circle cx="24" cy="24" r="19"></circle>
+          </svg>
+        </div>
+
+        <section id="error-panel" class="error-panel" aria-live="assertive" hidden>
+          <p id="error-text">无法连接 YouTube Music</p>
+          <div class="error-actions">
+            <button id="retry" type="button">重试</button>
+            <button id="quit" type="button">退出</button>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script src="splash.js"></script>
+  </body>
+</html>

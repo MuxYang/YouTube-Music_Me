@@ -1,0 +1,1040 @@
+html.ytm-desktop-app ytmusic-nav-bar {
+  -webkit-app-region: drag !important;
+  padding-right: 0 !important;
+  right: 0 !important;
+  user-select: none !important;
+  width: auto !important;
+}
+
+html.ytm-desktop-app,
+html.ytm-desktop-app body {
+  --ytm-desktop-control-gap: 4px;
+  --ytm-desktop-control-size: 38px;
+  --ytm-desktop-controls-width: 124px;
+  --ytm-desktop-native-gap: 6px;
+  scrollbar-width: none !important;
+}
+
+html.ytm-desktop-app::-webkit-scrollbar,
+html.ytm-desktop-app body::-webkit-scrollbar {
+  display: none !important;
+  height: 0 !important;
+  width: 0 !important;
+}
+
+html.ytm-desktop-app ytmusic-nav-bar input,
+html.ytm-desktop-app ytmusic-nav-bar button,
+html.ytm-desktop-app ytmusic-nav-bar a,
+html.ytm-desktop-app ytmusic-nav-bar tp-yt-paper-icon-button,
+html.ytm-desktop-app ytmusic-nav-bar ytmusic-search-box,
+html.ytm-desktop-app ytmusic-nav-bar #left-content,
+html.ytm-desktop-app ytmusic-nav-bar #right-content > :not(#ytm-desktop-window-controls) {
+  -webkit-app-region: no-drag !important;
+}
+
+html.ytm-desktop-app ytmusic-nav-bar #right-content {
+  align-items: center !important;
+  display: flex !important;
+  height: 100% !important;
+  margin-right: 0 !important;
+  padding-right: 0 !important;
+  position: absolute !important;
+  right: calc(var(--ytm-desktop-controls-width) + var(--ytm-desktop-native-gap)) !important;
+  width: max-content !important;
+}
+
+html.ytm-desktop-app ytmusic-nav-bar .center-content {
+  box-sizing: border-box !important;
+  padding-right: 12px !important;
+}
+
+html.ytm-desktop-app ytmusic-nav-bar ytmusic-settings-button {
+  flex-shrink: 0 !important;
+  margin-right: 0 !important;
+}
+
+html.ytm-desktop-app ytmusic-search-box #suggestion-list ytmusic-search-suggestion .title,
+html.ytm-desktop-app ytmusic-search-box #suggestion-list ytmusic-search-suggestion .title * {
+  color: #fff !important;
+}
+
+#ytm-desktop-window-controls {
+  -webkit-app-region: no-drag;
+  align-items: center;
+  display: flex;
+  gap: var(--ytm-desktop-control-gap);
+  height: 64px;
+  margin: 0;
+  padding-right: 2px;
+  position: fixed;
+  right: 0;
+  top: 0;
+  width: var(--ytm-desktop-controls-width);
+  z-index: 10000;
+}
+
+#ytm-desktop-window-controls .ytm-desktop-control {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  color: var(--ytmusic-text-primary, #fff);
+  cursor: default;
+  display: grid;
+  flex: 0 0 var(--ytm-desktop-control-size);
+  height: var(--ytm-desktop-control-size);
+  margin: 0;
+  min-width: var(--ytm-desktop-control-size);
+  padding: 0;
+  place-items: center;
+  transition: background-color 120ms ease, transform 120ms ease;
+  width: var(--ytm-desktop-control-size);
+}
+
+#ytm-desktop-window-controls .ytm-desktop-control:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+#ytm-desktop-window-controls .ytm-desktop-control:active {
+  background: rgba(255, 255, 255, 0.22);
+  transform: scale(0.94);
+}
+
+#ytm-desktop-window-controls .ytm-desktop-control:focus-visible {
+  box-shadow: inset 0 0 0 2px #8ab4f8;
+  outline: none;
+}
+
+#ytm-desktop-window-controls .ytm-desktop-close:hover {
+  background: #e81123;
+}
+
+#ytm-desktop-window-controls svg {
+  fill: none;
+  height: 17px;
+  pointer-events: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.5;
+  width: 17px;
+}
+
+#ytm-desktop-scrollbar {
+  -webkit-app-region: no-drag;
+  bottom: 8px;
+  opacity: 0.28;
+  padding: 0 1px 0 5px;
+  pointer-events: auto;
+  position: fixed;
+  right: 0;
+  top: 72px;
+  transition: opacity 180ms ease;
+  width: 12px;
+  z-index: 9999;
+}
+
+#ytm-desktop-scrollbar.visible,
+#ytm-desktop-scrollbar:hover,
+#ytm-desktop-scrollbar.dragging {
+  opacity: 1;
+}
+
+#ytm-desktop-scrollbar[hidden] {
+  display: none;
+}
+
+#ytm-desktop-scrollbar .ytm-desktop-scrollbar-thumb {
+  background: rgba(238, 238, 238, 0.72);
+  border-radius: 3px;
+  cursor: default;
+  min-height: 34px;
+  position: absolute;
+  right: 1px;
+  top: 0;
+  transition: background-color 140ms ease;
+  width: 6px;
+}
+
+#ytm-desktop-scrollbar:hover .ytm-desktop-scrollbar-thumb,
+#ytm-desktop-scrollbar.dragging .ytm-desktop-scrollbar-thumb {
+  background: rgba(245, 245, 245, 0.82);
+}
+
+@media (min-width: 961px) and (max-width: 1100px) {
+  html.ytm-desktop-app ytmusic-nav-bar ytmusic-search-box {
+    transform: translateX(-12px) !important;
+  }
+}
+
+.ytm-material-dialog-backdrop,
+.ytm-material-dialog-backdrop *,
+.ytm-material-menu,
+.ytm-material-menu * {
+  -webkit-app-region: no-drag;
+  box-sizing: border-box;
+}
+
+.ytm-material-dialog-backdrop {
+  align-items: center;
+  background: rgba(0, 0, 0, 0.58);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  opacity: 0;
+  padding: 24px;
+  position: fixed;
+  transition: opacity 140ms ease;
+  z-index: 100001;
+}
+
+.ytm-material-dialog-backdrop.open {
+  opacity: 1;
+}
+
+.ytm-material-dialog {
+  background: #202124;
+  border: 1px solid #5f6368;
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  color: #e8eaed;
+  max-width: 460px;
+  padding: 24px;
+  transform: translateY(8px) scale(0.98);
+  transition: transform 160ms ease;
+  width: 100%;
+}
+
+.ytm-material-dialog-backdrop.open .ytm-material-dialog {
+  transform: translateY(0) scale(1);
+}
+
+.ytm-material-dialog h2 {
+  color: #f1f3f4;
+  font-family: Roboto, Arial, sans-serif;
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 28px;
+  margin: 0 0 12px;
+}
+
+.ytm-material-dialog p {
+  color: #bdc1c6;
+  font-family: Roboto, Arial, sans-serif;
+  font-size: 14px;
+  letter-spacing: 0;
+  line-height: 20px;
+  margin: 0;
+}
+
+.ytm-material-dialog-checkbox {
+  align-items: center;
+  color: #e8eaed;
+  cursor: pointer;
+  display: flex;
+  font: 400 14px/20px Roboto, Arial, sans-serif;
+  gap: 10px;
+  letter-spacing: 0;
+  margin-top: 22px !important;
+  width: fit-content;
+}
+
+.ytm-material-dialog-checkbox input {
+  accent-color: #8ab4f8;
+  height: 18px;
+  margin: 0 !important;
+  width: 18px;
+}
+
+.ytm-material-dialog-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 28px;
+}
+
+.ytm-material-dialog-action {
+  appearance: none !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 18px !important;
+  color: #8ab4f8 !important;
+  cursor: pointer;
+  font: 500 14px/20px Roboto, Arial, sans-serif;
+  letter-spacing: 0;
+  min-height: 36px;
+  padding: 8px 16px !important;
+}
+
+.ytm-material-dialog-action:hover {
+  background: rgba(138, 180, 248, 0.1) !important;
+}
+
+.ytm-material-dialog-action:focus-visible {
+  outline: 2px solid #8ab4f8;
+  outline-offset: 2px;
+}
+
+.ytm-material-dialog-action:disabled {
+  cursor: wait;
+  opacity: 0.48;
+}
+
+.ytm-material-dialog-action.danger {
+  color: #f28b82 !important;
+}
+
+.ytm-material-dialog-action.danger:hover {
+  background: rgba(242, 139, 130, 0.1) !important;
+}
+
+.ytm-material-dialog-action.primary {
+  background: #8ab4f8 !important;
+  color: #202124 !important;
+}
+
+.ytm-material-dialog-action.primary:hover {
+  background: #aecbfa !important;
+}
+
+.ytm-material-menu {
+  background: #292a2d !important;
+  border: 1px solid #4a4b4e !important;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  color: #e8eaed;
+  min-width: 230px;
+  padding: 6px;
+  position: fixed;
+  width: max-content;
+  z-index: 100000;
+}
+
+.ytm-material-menu-item {
+  align-items: center;
+  appearance: none !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 4px !important;
+  color: #e8eaed !important;
+  cursor: pointer;
+  display: flex;
+  font: 400 14px/20px Roboto, Arial, sans-serif;
+  gap: 12px;
+  letter-spacing: 0;
+  min-height: 40px;
+  padding: 8px 12px !important;
+  text-align: left;
+  width: 100%;
+}
+
+.ytm-material-menu-item:hover,
+.ytm-material-menu-item:focus-visible {
+  background: rgba(232, 234, 237, 0.1) !important;
+  outline: none;
+}
+
+.ytm-material-menu-icon {
+  color: #bdc1c6;
+  display: grid;
+  flex: 0 0 20px;
+  place-items: center;
+}
+
+.ytm-material-menu-icon svg {
+  fill: none;
+  height: 19px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+  width: 19px;
+}
+
+.ytm-material-menu-separator {
+  background: #4a4b4e;
+  height: 1px;
+  margin: 5px 8px;
+}
+
+@media (max-width: 960px) {
+  html.ytm-desktop-app,
+  html.ytm-desktop-app body {
+    --ytm-desktop-control-size: 36px;
+    --ytm-desktop-controls-width: 118px;
+  }
+
+  html.ytm-desktop-app ytmusic-nav-bar #right-content {
+    margin-right: calc(var(--ytm-desktop-controls-width) + var(--ytm-desktop-native-gap)) !important;
+    position: static !important;
+    right: auto !important;
+  }
+
+  #ytm-desktop-window-controls {
+    margin-left: 0;
+  }
+
+  #ytm-desktop-window-controls .ytm-desktop-control {
+    flex-basis: 36px;
+    height: 36px;
+    min-width: 36px;
+    width: 36px;
+  }
+}
+
+.ytm-desktop-native-settings-hidden {
+  display: none !important;
+}
+
+.ytm-desktop-style-panel {
+  border-left: 1px solid #4e4e4e !important;
+  box-sizing: border-box;
+  flex: 1 1 0%;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.ytm-desktop-style-panel-content {
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: 24px 24px 24px 48px !important;
+}
+
+html.ytm-desktop-app ytmusic-settings-page ytmusic-setting-category-collection-renderer {
+  border-left: 1px solid #4e4e4e !important;
+  box-sizing: border-box !important;
+}
+
+html.ytm-desktop-app ytmusic-dialog.ytm-desktop-settings-dialog,
+html.ytm-desktop-app ytmusic-settings-page,
+html.ytm-desktop-app ytmusic-settings-page ytmusic-setting-category-collection-renderer,
+html.ytm-desktop-app ytmusic-settings-page #ytm-desktop-style-panel {
+  overflow-x: hidden !important;
+}
+
+html.ytm-desktop-app ytmusic-settings-page,
+html.ytm-desktop-app ytmusic-settings-page *,
+html.ytm-desktop-app ytmusic-dialog.ytm-desktop-settings-dialog {
+  scrollbar-width: none !important;
+}
+
+html.ytm-desktop-app ytmusic-settings-page::-webkit-scrollbar,
+html.ytm-desktop-app ytmusic-settings-page *::-webkit-scrollbar,
+html.ytm-desktop-app ytmusic-dialog.ytm-desktop-settings-dialog::-webkit-scrollbar {
+  display: none !important;
+  height: 0 !important;
+  width: 0 !important;
+}
+
+html.ytm-desktop-app:has(ytmusic-settings-page) #ytm-desktop-scrollbar {
+  display: none !important;
+}
+
+.ytm-desktop-style-panel[hidden] {
+  display: none !important;
+}
+
+html.ytm-desktop-app ytmusic-settings-page .category-menu {
+  isolation: isolate;
+  position: relative;
+}
+
+html.ytm-desktop-app ytmusic-settings-page .category-menu-item {
+  --paper-item-focused-before-opacity: 0;
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+  box-shadow: none !important;
+  position: relative;
+  touch-action: manipulation;
+  z-index: 1;
+}
+
+html.ytm-desktop-app ytmusic-settings-page .category-menu-item::before,
+html.ytm-desktop-app ytmusic-settings-page .category-menu-item::after,
+html.ytm-desktop-app ytmusic-settings-page .category-menu-item tp-yt-paper-ripple,
+html.ytm-desktop-app ytmusic-settings-page .category-menu-item #ink {
+  background: transparent !important;
+  box-shadow: none !important;
+  opacity: 0 !important;
+}
+
+.ytm-desktop-settings-selection {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.08)) !important;
+  border-radius: 2px;
+  left: 0;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  top: 0;
+  will-change: transform, height;
+  z-index: 0;
+}
+
+.ytm-desktop-settings-selection.ready {
+  opacity: 1;
+}
+
+html.ytm-desktop-animations .ytm-desktop-settings-selection.ready {
+  transition: opacity 120ms ease,
+    transform 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.ytm-desktop-setting-row {
+  align-items: flex-start;
+  border-bottom: 1px solid #4e4e4e !important;
+  box-sizing: border-box;
+  display: flex;
+  gap: 24px;
+  padding: 20px 0 !important;
+  width: 100%;
+}
+
+.ytm-desktop-setting-row[hidden] {
+  display: none !important;
+}
+
+.ytm-desktop-setting-copy {
+  flex: 1 1 0%;
+  min-width: 0;
+}
+
+.ytm-desktop-setting-title {
+  color: var(--ytmusic-text-primary, #fff);
+  font: 400 16px/22px Roboto, Arial, sans-serif;
+  letter-spacing: 0;
+}
+
+.ytm-desktop-setting-summary {
+  color: var(--ytmusic-text-secondary, #aaa);
+  font: 400 14px/22.4px Roboto, Arial, sans-serif;
+  letter-spacing: 0;
+  margin-top: 8px !important;
+  max-width: 560px;
+}
+
+.ytm-desktop-setting-toggle {
+  -webkit-app-region: no-drag;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  flex: 0 0 46px;
+  height: 32px;
+  margin: -5px 0 0;
+  padding: 0;
+  position: relative;
+  width: 46px;
+}
+
+.ytm-desktop-setting-toggle-track {
+  background: rgba(255, 255, 255, 0.5) !important;
+  border-radius: 8px;
+  height: 14px;
+  left: 5px;
+  position: absolute;
+  top: 9px;
+  transition: background-color 150ms ease;
+  width: 36px;
+}
+
+.ytm-desktop-setting-toggle-thumb {
+  background: #909090 !important;
+  border-radius: 50%;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.6);
+  height: 20px;
+  left: 5px;
+  position: absolute;
+  top: 6px;
+  transition: background-color 150ms ease, transform 150ms ease;
+  width: 20px;
+}
+
+.ytm-desktop-setting-toggle.checked .ytm-desktop-setting-toggle-track {
+  background: rgba(62, 166, 255, 0.55) !important;
+}
+
+.ytm-desktop-setting-toggle.checked .ytm-desktop-setting-toggle-thumb {
+  background: #3ea6ff !important;
+  transform: translateX(16px);
+}
+
+.ytm-desktop-setting-toggle:hover .ytm-desktop-setting-toggle-thumb {
+  box-shadow: 0 0 0 8px rgba(255, 255, 255, 0.08), 0 1px 5px rgba(0, 0, 0, 0.6);
+}
+
+.ytm-desktop-setting-toggle.checked:hover .ytm-desktop-setting-toggle-thumb {
+  box-shadow: 0 0 0 8px rgba(62, 166, 255, 0.14), 0 1px 5px rgba(0, 0, 0, 0.6);
+}
+
+.ytm-desktop-setting-toggle:focus-visible {
+  outline: 2px solid #3ea6ff;
+  outline-offset: 2px;
+}
+
+.ytm-desktop-setting-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.ytm-desktop-setting-select-row {
+  align-items: center;
+}
+
+.ytm-desktop-setting-select {
+  -webkit-app-region: no-drag;
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid #5f6368;
+  border-radius: 0;
+  color: var(--ytmusic-text-primary, #fff);
+  cursor: pointer;
+  display: flex;
+  flex: 0 0 240px;
+  font: 500 16px/24px Roboto, Arial, sans-serif;
+  gap: 16px;
+  justify-content: space-between;
+  letter-spacing: 0;
+  max-width: min(280px, 42%);
+  min-height: 44px;
+  padding: 8px 8px 8px 0 !important;
+  text-align: left;
+}
+
+.ytm-desktop-setting-select:hover {
+  border-bottom-color: #9aa0a6;
+}
+
+.ytm-desktop-setting-select:focus,
+.ytm-desktop-setting-select.open {
+  border-bottom-color: #3ea6ff;
+  outline: none;
+}
+
+.ytm-desktop-setting-select-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ytm-desktop-setting-select-chevron {
+  fill: none;
+  flex: 0 0 18px;
+  height: 18px;
+  pointer-events: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  transform: rotate(0deg);
+  transition: transform 150ms ease;
+  width: 18px;
+}
+
+.ytm-desktop-setting-select.open .ytm-desktop-setting-select-chevron {
+  transform: rotate(180deg);
+}
+
+.ytm-desktop-setting-picker {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background: #282828 !important;
+  background-image: none !important;
+  border-radius: 2px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+  box-sizing: border-box;
+  max-height: min(440px, calc(100vh - 16px));
+  isolation: isolate;
+  opacity: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+  position: fixed;
+  transform: translateY(-4px);
+  transition: transform 100ms ease;
+  visibility: hidden;
+  z-index: 2147483000;
+}
+
+.ytm-desktop-setting-picker.open {
+  transform: translateY(0);
+  visibility: visible;
+}
+
+.ytm-desktop-setting-picker-option {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: #f1f1f1;
+  cursor: pointer;
+  display: block;
+  font: 500 16px/24px Roboto, Arial, sans-serif;
+  letter-spacing: 0;
+  min-height: 48px;
+  padding: 12px 24px !important;
+  text-align: left;
+  width: 100%;
+}
+
+.ytm-desktop-setting-picker-option[aria-selected="true"] {
+  background: rgba(255, 255, 255, 0.13);
+  color: #fff;
+}
+
+.ytm-desktop-setting-picker-option:hover,
+.ytm-desktop-setting-picker-option:focus-visible {
+  background: rgba(255, 255, 255, 0.1);
+  outline: none;
+}
+
+.ytm-desktop-setting-picker-option:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.ytm-desktop-native-tab-hidden {
+  display: none !important;
+}
+
+#side-panel #selectionBar.ytm-desktop-player-selection-bar {
+  left: 0 !important;
+  right: auto !important;
+  transform: translate3d(var(--ytm-desktop-player-tab-x, 0), 0, 0) !important;
+  transform-origin: left center !important;
+  width: var(--ytm-desktop-player-tab-width, 0) !important;
+  will-change: transform, width;
+}
+
+#side-panel #selectionBar.ytm-desktop-player-selection-bar[data-ytm-desktop-ready="true"] {
+  transition: transform 180ms cubic-bezier(0.2, 0, 0, 1),
+    width 180ms cubic-bezier(0.2, 0, 0, 1) !important;
+}
+
+#ytm-desktop-lyrics-panel {
+  box-sizing: border-box;
+  color: var(--ytmusic-text-primary, #fff);
+  height: calc(100% - 48px);
+  overflow: hidden;
+  position: relative;
+}
+
+.ytm-desktop-lyrics-scroll {
+  box-sizing: border-box;
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 42% 18px 42% !important;
+  scroll-behavior: smooth;
+  scrollbar-width: none !important;
+}
+
+#ytm-desktop-lyrics-panel[hidden] {
+  display: none !important;
+}
+
+.ytm-desktop-lyrics-scroll::-webkit-scrollbar {
+  display: none !important;
+  height: 0 !important;
+  width: 0 !important;
+}
+
+.ytm-desktop-lyrics-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ytm-desktop-lyrics-line {
+  appearance: none !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 4px !important;
+  color: var(--ytmusic-text-secondary, #aaa) !important;
+  cursor: pointer;
+  display: block;
+  font: 500 18px/28px Roboto, Arial, sans-serif;
+  letter-spacing: 0;
+  opacity: 0.46;
+  padding: 8px 10px !important;
+  text-align: left;
+  transform-origin: left center;
+  transition: color 180ms ease, opacity 180ms ease, transform 180ms ease;
+  width: 100%;
+}
+
+.ytm-desktop-lyrics-line:hover,
+.ytm-desktop-lyrics-line:focus-visible {
+  background: rgba(255, 255, 255, 0.06) !important;
+  opacity: 0.76;
+  outline: none;
+}
+
+.ytm-desktop-lyrics-line.active {
+  color: var(--ytmusic-text-primary, #fff) !important;
+  opacity: 1;
+  transform: scale(1.025);
+}
+
+.ytm-desktop-lyrics-line-original,
+.ytm-desktop-lyrics-line-translation {
+  display: block;
+  letter-spacing: 0;
+}
+
+.ytm-desktop-lyrics-line-translation {
+  color: var(--ytmusic-text-secondary, #aaa);
+  font: 400 14px/21px Roboto, Arial, sans-serif;
+  margin-top: 3px !important;
+  opacity: 0.82;
+}
+
+.ytm-desktop-lyrics-line-translation[hidden] {
+  display: none !important;
+}
+
+.ytm-desktop-lyrics-line.active .ytm-desktop-lyrics-line-translation {
+  color: var(--ytmusic-text-primary, #fff);
+  opacity: 0.78;
+}
+
+.ytm-desktop-lyrics-spacer {
+  height: 16px;
+}
+
+.ytm-desktop-lyrics-status {
+  align-items: center;
+  color: var(--ytmusic-text-secondary, #aaa);
+  display: flex;
+  font: 400 14px/22px Roboto, Arial, sans-serif;
+  justify-content: center;
+  letter-spacing: 0;
+  min-height: 80px;
+  text-align: center;
+}
+
+.ytm-desktop-lyrics-status.loading::before {
+  animation: ytm-desktop-lyrics-spin 800ms linear infinite;
+  border: 2px solid rgba(255, 255, 255, 0.24);
+  border-radius: 50%;
+  border-top-color: #fff;
+  content: '';
+  height: 16px;
+  margin-right: 10px;
+  width: 16px;
+}
+
+.ytm-desktop-lyrics-source {
+  color: var(--ytmusic-text-secondary, #aaa);
+  font: 400 11px/16px Roboto, Arial, sans-serif;
+  letter-spacing: 0;
+  opacity: 0.5;
+  padding: 24px 52px 0 10px !important;
+  text-align: left;
+}
+
+.ytm-desktop-lyrics-translate {
+  -webkit-app-region: no-drag;
+  align-items: center;
+  appearance: none;
+  backdrop-filter: blur(12px);
+  background: rgba(32, 33, 36, 0.84) !important;
+  border: 1px solid rgba(255, 255, 255, 0.18) !important;
+  border-radius: 50% !important;
+  bottom: 12px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.34);
+  color: #fff !important;
+  cursor: pointer;
+  display: flex;
+  height: 38px;
+  justify-content: center;
+  padding: 0 !important;
+  position: absolute;
+  right: 12px;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+  width: 38px;
+  z-index: 3;
+}
+
+.ytm-desktop-lyrics-translate[hidden] {
+  display: none !important;
+}
+
+.ytm-desktop-lyrics-translate:hover {
+  background: rgba(58, 59, 62, 0.94) !important;
+}
+
+.ytm-desktop-lyrics-translate:focus-visible {
+  outline: 2px solid #3ea6ff;
+  outline-offset: 2px;
+}
+
+.ytm-desktop-lyrics-translate.active {
+  background: rgba(62, 166, 255, 0.2) !important;
+  border-color: rgba(62, 166, 255, 0.72) !important;
+  color: #8ac7ff !important;
+}
+
+.ytm-desktop-lyrics-translate.error {
+  border-color: rgba(242, 139, 130, 0.72) !important;
+  color: #f28b82 !important;
+}
+
+.ytm-desktop-lyrics-translate:disabled {
+  cursor: wait;
+}
+
+.ytm-desktop-lyrics-translate svg {
+  fill: none;
+  height: 20px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  width: 20px;
+}
+
+.ytm-desktop-lyrics-translate.loading svg {
+  opacity: 0;
+}
+
+.ytm-desktop-lyrics-translate.loading::after {
+  animation: ytm-desktop-lyrics-spin 800ms linear infinite;
+  border: 2px solid rgba(255, 255, 255, 0.24);
+  border-radius: 50%;
+  border-top-color: currentColor;
+  content: '';
+  height: 16px;
+  position: absolute;
+  width: 16px;
+}
+
+@keyframes ytm-desktop-lyrics-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+html.ytm-desktop-translucent ytmusic-dialog,
+html.ytm-desktop-translucent tp-yt-paper-dialog,
+html.ytm-desktop-translucent ytmusic-search-box #suggestion-list,
+html.ytm-desktop-translucent ytmusic-player-bar,
+html.ytm-desktop-translucent ytmusic-player-queue-item[selected],
+html.ytm-desktop-translucent ytmusic-player-queue-item[play-button-state="playing"],
+html.ytm-desktop-translucent ytmusic-multi-page-menu-renderer,
+html.ytm-desktop-translucent ytd-multi-page-menu-renderer,
+html.ytm-desktop-translucent ytmusic-menu-popup-renderer,
+html.ytm-desktop-translucent .ytm-material-dialog,
+html.ytm-desktop-translucent .ytm-material-menu {
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  backdrop-filter: blur(22px) saturate(140%);
+  background-color: rgba(32, 33, 36, 0.72) !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+}
+
+html.ytm-desktop-translucent ytmusic-search-box #suggestion-list {
+  background-color: rgba(24, 25, 27, 0.94) !important;
+  opacity: 1 !important;
+}
+
+html.ytm-desktop-translucent ytmusic-multi-page-menu-renderer #container,
+html.ytm-desktop-translucent ytd-multi-page-menu-renderer #container,
+html.ytm-desktop-translucent ytmusic-menu-popup-renderer #items {
+  background-color: transparent !important;
+}
+
+html.ytm-desktop-translucent ytmusic-search-box #suggestion-list > *,
+html.ytm-desktop-translucent ytmusic-search-box ytmusic-search-suggestions-section,
+html.ytm-desktop-translucent ytmusic-search-box ytmusic-search-suggestion,
+html.ytm-desktop-translucent ytmusic-search-box ytmusic-responsive-list-item-renderer,
+html.ytm-desktop-translucent ytmusic-player-queue-item[selected] > *,
+html.ytm-desktop-translucent ytmusic-player-queue-item[play-button-state="playing"] > * {
+  background-color: transparent !important;
+}
+
+@keyframes ytm-desktop-expand-down {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scaleY(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+  }
+}
+
+@keyframes ytm-desktop-settings-content-enter {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes ytm-desktop-settings-content-leave {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-14px);
+  }
+}
+
+@keyframes ytm-desktop-settings-exit {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+}
+
+html.ytm-desktop-animations .ytm-desktop-surface-entering {
+  animation: ytm-desktop-expand-down 190ms cubic-bezier(0.2, 0, 0, 1);
+  transform-origin: top center;
+}
+
+html.ytm-desktop-animations ytmusic-dialog.ytm-desktop-settings-closing {
+  animation: ytm-desktop-settings-exit 170ms cubic-bezier(0.4, 0, 1, 1) forwards !important;
+  pointer-events: none;
+}
+
+html.ytm-desktop-animations .ytm-desktop-settings-entering {
+  animation: ytm-desktop-settings-content-enter 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+html.ytm-desktop-animations .ytm-desktop-settings-leaving {
+  animation: ytm-desktop-settings-content-leave 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+html.ytm-desktop-animations .ytm-material-dialog-backdrop.closing {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.ytm-desktop-animations .ytm-desktop-surface-entering,
+  html.ytm-desktop-animations ytmusic-dialog.ytm-desktop-settings-closing,
+  html.ytm-desktop-animations .ytm-desktop-settings-entering,
+  html.ytm-desktop-animations .ytm-desktop-settings-leaving {
+    animation: none !important;
+  }
+
+  html.ytm-desktop-animations .ytm-desktop-settings-selection.ready,
+  .ytm-desktop-setting-toggle-track,
+  .ytm-desktop-setting-toggle-thumb {
+    transition: none;
+  }
+}

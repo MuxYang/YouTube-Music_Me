@@ -1,0 +1,9 @@
+node_modules/
+release/
+release-*/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+.test-profile/
+.pack-profile/

@@ -1,0 +1,53 @@
+{
+  "name": "youtube-music-me",
+  "version": "0.1.0",
+  "description": "A lightweight YouTube Music desktop shell for Windows and Linux.",
+  "main": "src/main.js",
+  "author": "MuxYang",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node --test",
+    "pack": "electron-builder --dir",
+    "dist:win": "electron-builder --win nsis portable",
+    "dist:linux": "electron-builder --linux AppImage deb"
+  },
+  "devDependencies": {
+    "electron": "^43.1.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.muxyang.youtubemusicme",
+    "productName": "YouTube Music Me",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "src/assets/icon.png",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "linux": {
+      "icon": "src/assets/icon.png",
+      "category": "AudioVideo;Audio;Player",
+      "target": [
+        "AppImage",
+        "deb"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
