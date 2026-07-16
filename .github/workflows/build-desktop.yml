@@ -1,0 +1,176 @@
+name: Build desktop packages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-x64:
+    name: Windows x64
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build Windows packages
+        run: npm run dist:win
+
+      - name: Verify artifacts
+        shell: pwsh
+        run: |
+          $artifacts = @(Get-ChildItem release -Filter '*.exe' -File)
+          if ($artifacts.Count -lt 2) {
+            throw "Expected at least two Windows executables, found $($artifacts.Count)."
+          }
+          $checksums = foreach ($artifact in $artifacts) {
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $artifact.FullName).Hash.ToLowerInvariant()
+            "$hash  $($artifact.Name)"
+          }
+          $checksums | Set-Content release\SHA256SUMS-windows-x64.txt -Encoding ascii
+
+      - name: Upload Windows packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-music-me-windows-x64
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/SHA256SUMS-windows-x64.txt
+
+  build-linux-x64:
+    name: Linux x64 (Debian 13)
+    runs-on: ubuntu-latest
+    container:
+      image: node:22-trixie
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install packaging tools
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends \
+            ca-certificates \
+            file \
+            fakeroot \
+            git \
+            libarchive-tools \
+            rpm \
+            xz-utils
+          rm -rf /var/lib/apt/lists/*
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build Linux packages
+        run: npm run dist:linux
+
+      - name: Verify artifacts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          version="$(node -p "require('./package.json').version")"
+          appimage="release/YouTube Music Me-${version}.AppImage"
+          deb="release/youtube-music-me_${version}_amd64.deb"
+          tarball="release/youtube-music-me-${version}.tar.gz"
+          mapfile -t rpm_packages < <(compgen -G "release/*.rpm")
+          test "${#rpm_packages[@]}" -eq 1
+          rpm_package="${rpm_packages[0]}"
+
+          for artifact in "$appimage" "$deb" "$rpm_package" "$tarball"; do
+            test -s "$artifact"
+          done
+
+          file "$appimage" "$deb" "$rpm_package" "$tarball"
+          dpkg-deb --info "$deb" >/dev/null
+          rpm --query --package --info "$rpm_package" >/dev/null
+          tar -tzf "$tarball" >/dev/null
+          sha256sum "$appimage" "$deb" "$rpm_package" "$tarball" \
+            > release/SHA256SUMS-linux-x64.txt
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-music-me-linux-x64
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.tar.gz
+            release/SHA256SUMS-linux-x64.txt
+
+  build-macos-universal:
+    name: macOS Universal (unsigned)
+    runs-on: macos-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build unsigned macOS packages
+        run: npm run dist:mac
+
+      - name: Verify artifacts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          artifacts=(release/*.dmg release/*.zip)
+          for artifact in "${artifacts[@]}"; do
+            test -s "$artifact"
+          done
+          hdiutil verify release/*.dmg
+          unzip -t release/*.zip >/dev/null
+          shasum -a 256 "${artifacts[@]}" > release/SHA256SUMS-macos-universal.txt
+
+      - name: Upload macOS packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-music-me-macos-universal-unsigned
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/SHA256SUMS-macos-universal.txt

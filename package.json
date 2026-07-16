@@ -1,9 +1,13 @@
 {
   "name": "youtube-music-me",
   "version": "0.1.0",
-  "description": "An unofficial YouTube Music desktop client for Windows and Linux.",
+  "description": "An unofficial YouTube Music desktop client for Windows, Linux, and macOS.",
   "main": "src/main.js",
-  "author": "MuxYang",
+  "author": {
+    "name": "MuxYang",
+    "email": "3489892672@qq.com"
+  },
+  "desktopName": "youtube-music-me.desktop",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
@@ -11,7 +15,8 @@
     "test": "node --test",
     "pack": "electron-builder --dir",
     "dist:win": "electron-builder --win nsis portable",
-    "dist:linux": "electron-builder --linux AppImage deb"
+    "dist:linux": "electron-builder --linux AppImage deb rpm tar.gz",
+    "dist:mac": "electron-builder --mac dmg zip --universal"
   },
   "devDependencies": {
     "electron": "^43.1.0",
@@ -38,9 +43,22 @@
     "linux": {
       "icon": "src/assets/icon.png",
       "category": "AudioVideo;Audio;Player",
+      "syncDesktopName": true,
       "target": [
         "AppImage",
-        "deb"
+        "deb",
+        "rpm",
+        "tar.gz"
+      ]
+    },
+    "mac": {
+      "category": "public.app-category.music",
+      "hardenedRuntime": false,
+      "icon": "src/assets/icon.png",
+      "identity": null,
+      "target": [
+        "dmg",
+        "zip"
       ]
     },
     "nsis": {

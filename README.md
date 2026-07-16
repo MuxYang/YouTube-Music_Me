@@ -2,7 +2,7 @@
 
 [简体中文](README.zh.md)
 
-An unofficial Electron desktop client for YouTube Music on Windows and Linux. It loads the official YouTube Music web app and adds native desktop integration, synchronized lyrics, translation, and configurable window behavior.
+An unofficial Electron desktop client for YouTube Music on Windows, Linux, and macOS. It loads the official YouTube Music web app and adds native desktop integration, synchronized lyrics, translation, and configurable window behavior.
 
 **App type:** Unofficial desktop client built with Electron and `WebContentsView`.
 
@@ -70,14 +70,18 @@ Windows:
 npm run dist:win
 ```
 
-Linux (run in a Linux environment):
+Desktop packages are built by the `Build desktop packages` GitHub Actions workflow. It runs after every commit push and every `v*` tag push, and can also be started manually from the Actions tab.
+
+Linux builds run in a Debian 13 container. For a local Linux build:
 
 ```bash
 npm ci
 npm run dist:linux
 ```
 
-Build artifacts are written to `release/`. Linux tray support depends on the desktop environment providing StatusNotifier/AppIndicator support.
+The Linux build produces AppImage, Debian package, RPM package, and portable tarball artifacts. Build artifacts are written to `release/`. Linux tray support depends on the desktop environment providing StatusNotifier/AppIndicator support.
+
+The workflow also builds an unsigned universal macOS DMG and ZIP. These experimental artifacts are not notarized and may require manual approval in macOS Gatekeeper.
 
 ## Maintenance warning
 

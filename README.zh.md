@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-面向 Windows 和 Linux 的非官方 YouTube Music Electron 桌面客户端。客户端加载官方 YouTube Music 网页，并增加原生桌面集成、同步歌词、歌词翻译和可配置的窗口行为。
+面向 Windows、Linux 和 macOS 的非官方 YouTube Music Electron 桌面客户端。客户端加载官方 YouTube Music 网页，并增加原生桌面集成、同步歌词、歌词翻译和可配置的窗口行为。
 
 **应用类型：** 使用 Electron 与 `WebContentsView` 构建的非官方桌面客户端。
 
@@ -70,14 +70,18 @@ Windows：
 npm run dist:win
 ```
 
-Linux：
+Windows、Linux 和 macOS 软件包由 GitHub Actions 的 `Build desktop packages` 工作流构建。任意 commit push 和 `v*` Tag push 都会触发，也可以在 Actions 页面手动运行。
+
+Linux 构建使用 Debian 13 容器。若要在本地 Linux 环境构建：
 
 ```bash
 npm ci
 npm run dist:linux
 ```
 
-构建产物输出到 `release/`。Linux 托盘功能依赖桌面环境提供 StatusNotifier/AppIndicator 支持。
+Linux 构建会生成 AppImage、Debian 软件包、RPM 软件包和便携 tarball 四种产物。构建产物输出到 `release/`。Linux 托盘功能依赖桌面环境提供 StatusNotifier/AppIndicator 支持。
+
+工作流还会生成未签名的 macOS Universal DMG 和 ZIP。这些实验性产物未经 Apple 公证，可能需要用户在 macOS Gatekeeper 中手动允许。
 
 ## 维护性警告
 
