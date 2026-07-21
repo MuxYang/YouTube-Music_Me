@@ -66,7 +66,9 @@ function extractNeteaseLyrics(value) {
     const milliseconds = Number(match[1]);
     const minutes = Math.floor(milliseconds / 60000);
     const seconds = ((milliseconds % 60000) / 1000).toFixed(3).padStart(6, '0');
-    const text = line.replace(/^\[\d+,\d+\]/, '').replace(/\([^)]*\)/g, '').trim();
+    const text = line.replace(/^\[\d+,\d+\]/, '')
+      .replace(/\(\d+,\d+(?:,\d+)?\)/g, '')
+      .trim();
     return Number.isFinite(milliseconds)
       ? `[${String(minutes).padStart(2, '0')}:${seconds}]${text}`
       : '';
@@ -99,6 +101,13 @@ function extractYouTubeCaptionLyrics(value) {
   return lines.map((line) => `${formatLrcTimestamp(line.time)}${line.text}`).join('\n');
 }
 
+function validateNeteaseResponse(value) {
+  if (value && Object.hasOwn(value, 'code') && Number(value.code) !== 200) {
+    throw new Error(`NetEase returned service code ${value.code}.`);
+  }
+  return value;
+}
+
 function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
   if (typeof requestJson !== 'function') {
     throw new TypeError('requestJson is required.');
@@ -110,6 +119,10 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
     ...(source === 'netease' ? { Referer: 'https://music.163.com/' } : {}),
     'User-Agent': getUserAgent() || 'YouTube Music Me/0.1.0'
   });
+  const requestNeteaseJson = async (url) => validateNeteaseResponse(await requestJson(url, {
+    headers: requestHeaders('netease'),
+    timeoutMs: 10000
+  }));
 
   async function lookupLrclib(track, hints) {
     const candidates = [];
@@ -144,10 +157,9 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
         s: `${pair.trackName} ${pair.artistName}`,
         type: '1'
       });
-      const response = await requestJson(`https://music.163.com/api/cloudsearch/pc?${query}`, {
-        headers: requestHeaders('netease'),
-        timeoutMs: 10000
-      });
+      const response = await requestNeteaseJson(
+        `https://music.163.com/api/cloudsearch/pc?${query}`
+      );
       for (const song of Array.isArray(response?.result?.songs) ? response.result.songs : []) {
         const candidate = formatNeteaseCandidate(song);
         if (candidate.id) {
@@ -175,10 +187,9 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
           s: title,
           type: '1'
         });
-        const response = await requestJson(`https://music.163.com/api/cloudsearch/pc?${query}`, {
-          headers: requestHeaders('netease'),
-          timeoutMs: 10000
-        });
+        const response = await requestNeteaseJson(
+          `https://music.163.com/api/cloudsearch/pc?${query}`
+        );
         for (const song of Array.isArray(response?.result?.songs) ? response.result.songs : []) {
           const candidate = formatNeteaseCandidate(song);
           if (candidate.id) {
@@ -202,10 +213,7 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
         rv: '-1',
         tv: '-1'
       });
-      const value = await requestJson(`https://music.163.com/api/song/lyric?${query}`, {
-        headers: requestHeaders('netease'),
-        timeoutMs: 10000
-      });
+      const value = await requestNeteaseJson(`https://music.163.com/api/song/lyric?${query}`);
       const syncedLyrics = extractNeteaseLyrics(value);
       if (!syncedLyrics || isLikelyRomanizedLyrics(syncedLyrics, track)) {
         continue;
@@ -250,9 +258,6 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
         const code = String(caption.languageCode || '').toLowerCase();
         const exactLanguage = code === language;
         const sameLanguageFamily = baseLanguage && code.split('-')[0] === baseLanguage;
-        if (caption.kind === 'asr' && !exactLanguage && !sameLanguageFamily) {
-          return null;
-        }
         let score = caption.kind === 'asr' ? 0 : 100;
         if (exactLanguage) score += 240;
         else if (sameLanguageFamily) score += 180;
@@ -287,6 +292,7 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
       duration: Number(track.duration) || 0,
       id: `${track.videoId}:${selected.vssId || selected.languageCode}`,
       source: 'youtube-cc',
+      sourceLanguage: String(selected.languageCode || ''),
       syncedLyrics,
       trackName: String(track.title || track.videoTitle || '')
     } : null;
@@ -347,8 +353,7 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
           const result = await provider.lookup(track, hints);
           successfulProviders += 1;
           if (result) {
-            const retryRecommended = providerFailures > 0
-              || (result.source === 'lrclib' && providerAttempts.includes('netease'));
+            const retryRecommended = providerFailures > 0;
             const resolved = {
               ...result,
               providerAttempts,

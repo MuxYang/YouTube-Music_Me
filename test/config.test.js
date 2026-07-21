@@ -105,6 +105,9 @@ test('normalizes the lyrics translation provider', () => {
     lyrics: { translationProvider: 'deepl' }
   }).lyrics.translationProvider, 'deepl');
   assert.equal(normalizeSettings({
+    lyrics: { translationProvider: 'azure' }
+  }).lyrics.translationProvider, 'azure');
+  assert.equal(normalizeSettings({
     lyrics: { translationProvider: 'unknown' }
   }).lyrics.translationProvider, 'google');
 });

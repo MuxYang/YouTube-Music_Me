@@ -68,11 +68,30 @@ function createTrackFingerprint(track = {}) {
   const videoId = String(track.videoId || '').trim();
   const title = String(track.title || '').normalize('NFKC').trim().toLowerCase();
   const artist = String(track.artist || '').normalize('NFKC').trim().toLowerCase();
+  const album = String(track.album || '').normalize('NFKC').trim().toLowerCase();
+  const albumAliases = (Array.isArray(track.albumAliases) ? track.albumAliases : [])
+    .map((value) => String(value || '').normalize('NFKC').trim().toLowerCase())
+    .filter(Boolean);
+  const artistAliases = (Array.isArray(track.artistAliases) ? track.artistAliases : [])
+    .map((value) => String(value || '').normalize('NFKC').trim().toLowerCase())
+    .filter(Boolean);
+  const titleAliases = (Array.isArray(track.titleAliases) ? track.titleAliases : [])
+    .map((value) => String(value || '').normalize('NFKC').trim().toLowerCase())
+    .filter(Boolean);
   const duration = Math.round(Number(track.duration) || 0);
   if (!title || !artist || duration <= 0) {
     return '';
   }
-  return JSON.stringify({ artist, duration, title, videoId });
+  return JSON.stringify({
+    album,
+    albumAliases,
+    artist,
+    artistAliases,
+    duration,
+    title,
+    titleAliases,
+    videoId
+  });
 }
 
 function playerBarBelongsToTrack(playerBarVideoId, responseVideoId) {

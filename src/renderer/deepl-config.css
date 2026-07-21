@@ -39,6 +39,10 @@ form {
   margin-top: 24px;
 }
 
+.field + .field {
+  margin-top: 16px;
+}
+
 label {
   color: #e8eaed;
   display: block;

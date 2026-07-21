@@ -1,12 +1,82 @@
 'use strict';
 
 const GOOGLE_TRANSLATE_CHARACTER_LIMIT = 4500;
+const AZURE_TRANSLATE_CHARACTER_LIMIT = 45000;
+const AZURE_TRANSLATE_TEXT_LIMIT = 100;
 const DEEPL_REQUEST_BYTE_LIMIT = 120 * 1024;
 const GOOGLE_LINE_SEPARATOR_TOKEN = '[[[YTM9F3A7C1D]]]';
 const GOOGLE_LINE_SEPARATOR = `\n${GOOGLE_LINE_SEPARATOR_TOKEN}\n`;
 
 function normalizeTranslationProvider(value) {
-  return String(value || '').toLowerCase() === 'deepl' ? 'deepl' : 'google';
+  const provider = String(value || '').toLowerCase();
+  return ['deepl', 'azure'].includes(provider) ? provider : 'google';
+}
+
+function normalizeAzureTranslatorKey(value) {
+  const key = String(value || '').trim();
+  if (key.length < 16 || key.length > 128 || !/^[!-~]+$/u.test(key)) {
+    throw new Error('A valid Azure Translator subscription key is required.');
+  }
+  return key;
+}
+
+function normalizeAzureTranslatorRegion(value) {
+  const region = String(value || '').trim().toLowerCase();
+  if (region && !/^[a-z0-9-]{2,64}$/u.test(region)) {
+    throw new Error('The Azure Translator region is invalid.');
+  }
+  return region;
+}
+
+function normalizeAzureTranslatorEndpoint(value) {
+  const raw = String(value || '').trim() || 'https://api.cognitive.microsofttranslator.com';
+  let endpoint;
+  try {
+    endpoint = new URL(raw);
+  } catch {
+    throw new Error('The Azure Translator endpoint is invalid.');
+  }
+  const hostname = endpoint.hostname.toLowerCase();
+  const translatorEndpoint = /^api(?:-(?:apc|eur|nam))?\.cognitive\.microsofttranslator\.com$/u
+    .test(hostname);
+  const trusted = translatorEndpoint
+    || hostname.endsWith('.cognitiveservices.azure.com');
+  if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password
+    || endpoint.search || endpoint.hash || !trusted) {
+    throw new Error('The Azure Translator endpoint must be an HTTPS Azure endpoint.');
+  }
+  const pathname = endpoint.pathname.replace(/\/+$/u, '').toLowerCase();
+  const allowedPaths = translatorEndpoint
+    ? ['', '/translate']
+    : ['', '/translator/text/v3.0', '/translator/text/v3.0/translate'];
+  if (!allowedPaths.includes(pathname)) {
+    throw new Error('The Azure Translator endpoint path is invalid.');
+  }
+  return endpoint.origin;
+}
+
+function createAzureTranslatorUrl(endpoint, targetLanguage) {
+  const normalizedEndpoint = normalizeAzureTranslatorEndpoint(endpoint);
+  const url = new URL(normalizedEndpoint);
+  const translatorEndpoint = /^api(?:-(?:apc|eur|nam))?\.cognitive\.microsofttranslator\.com$/u
+    .test(url.hostname.toLowerCase());
+  url.pathname = translatorEndpoint
+    ? '/translate'
+    : '/translator/text/v3.0/translate';
+  url.searchParams.set('api-version', '3.0');
+  url.searchParams.set('to', normalizeAzureTargetLanguage(targetLanguage));
+  return url.href;
+}
+
+function normalizeAzureTargetLanguage(value) {
+  const language = String(value || '').trim().replace(/_/g, '-').toLowerCase();
+  if (language === 'zh' || /^zh-(?:hans|cn|sg)(?:-|$)/u.test(language)) {
+    return 'zh-Hans';
+  }
+  if (/^zh-(?:hant|tw|hk|mo)(?:-|$)/u.test(language)) {
+    return 'zh-Hant';
+  }
+  return language.match(/^[a-z]{2,3}/u)?.[0] || 'en';
 }
 
 function normalizeDeepLAuthKey(value) {
@@ -70,6 +140,33 @@ function createGoogleLyricsBatches(lines, limit = GOOGLE_TRANSLATE_CHARACTER_LIM
   return batches;
 }
 
+function createAzureTranslatorBatches(
+  lines,
+  characterLimit = AZURE_TRANSLATE_CHARACTER_LIMIT,
+  textLimit = AZURE_TRANSLATE_TEXT_LIMIT
+) {
+  const batches = [];
+  let current = [];
+  let characters = 0;
+  for (const line of lines) {
+    if (current.length
+      && (current.length >= textLimit || characters + line.length > characterLimit)) {
+      batches.push(current);
+      current = [];
+      characters = 0;
+    }
+    if (line.length > characterLimit) {
+      throw new Error('A lyrics line exceeds the Azure Translator request limit.');
+    }
+    current.push(line);
+    characters += line.length;
+  }
+  if (current.length) {
+    batches.push(current);
+  }
+  return batches;
+}
+
 function joinGoogleLyricsLines(lines) {
   return lines.join(GOOGLE_LINE_SEPARATOR);
 }
@@ -124,12 +221,20 @@ function createDeepLLyricsPayloads(
 }
 
 module.exports = {
+  AZURE_TRANSLATE_CHARACTER_LIMIT,
+  AZURE_TRANSLATE_TEXT_LIMIT,
   DEEPL_REQUEST_BYTE_LIMIT,
   GOOGLE_LINE_SEPARATOR,
   GOOGLE_TRANSLATE_CHARACTER_LIMIT,
+  createAzureTranslatorUrl,
+  createAzureTranslatorBatches,
   createDeepLLyricsPayloads,
   createGoogleLyricsBatches,
   joinGoogleLyricsLines,
+  normalizeAzureTranslatorEndpoint,
+  normalizeAzureTranslatorKey,
+  normalizeAzureTranslatorRegion,
+  normalizeAzureTargetLanguage,
   normalizeDeepLAuthKey,
   normalizeDeepLTargetLanguage,
   normalizeTranslationProvider,

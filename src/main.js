@@ -22,15 +22,23 @@ const {
   normalizeTranslationLanguage
 } = require('./lyrics');
 const { createLyricsService } = require('./lyrics-service');
+const { detectLyricsLanguage } = require('./language-detection');
+const { createHttpError, retryAsync } = require('./network-utils');
 const {
   getAppStrings,
+  getAzureConfigStrings,
   getDeepLConfigStrings,
   parseYouTubeLanguagePreference
 } = require('./i18n');
 const {
+  createAzureTranslatorUrl,
+  createAzureTranslatorBatches,
   createDeepLLyricsPayloads,
   createGoogleLyricsBatches,
   joinGoogleLyricsLines,
+  normalizeAzureTranslatorEndpoint,
+  normalizeAzureTranslatorKey,
+  normalizeAzureTranslatorRegion,
   normalizeDeepLAuthKey,
   normalizeTranslationProvider,
   splitGoogleLyricsText
@@ -46,13 +54,17 @@ const iconPath = path.join(__dirname, 'assets', 'icon.png');
 const splashPath = path.join(__dirname, 'renderer', 'splash.html');
 const musicPreloadPath = path.join(__dirname, 'preload', 'music.js');
 const splashPreloadPath = path.join(__dirname, 'preload', 'splash.js');
+const azureConfigPreloadPath = path.join(__dirname, 'preload', 'azure-config.js');
 const deeplConfigPreloadPath = path.join(__dirname, 'preload', 'deepl-config.js');
+const azureConfigPath = path.join(__dirname, 'renderer', 'azure-config.html');
 const deeplConfigPath = path.join(__dirname, 'renderer', 'deepl-config.html');
 const titlebarCssPath = path.join(__dirname, 'renderer', 'titlebar.css');
 
 let mainWindow = null;
 let musicView = null;
 let authWindow = null;
+let azureConfigWindow = null;
+let azureConfigPromise = null;
 let deeplConfigWindow = null;
 let deeplConfigPromise = null;
 let tray = null;
@@ -70,6 +82,7 @@ let settings = DEFAULT_SETTINGS;
 let electronUserAgent = '';
 let youtubeLanguagePreference = '';
 let restartRequested = false;
+let azureTranslatorConfig = null;
 let deeplAuthKey = '';
 const lyricsTranslationCache = new Map();
 let desktopLyricsState = null;
@@ -118,6 +131,41 @@ function storeDeepLAuthKey(authKey) {
   deeplAuthKey = normalized;
 }
 
+function normalizeAzureConfig(value = {}) {
+  return {
+    endpoint: normalizeAzureTranslatorEndpoint(value.endpoint),
+    key: normalizeAzureTranslatorKey(value.key),
+    region: normalizeAzureTranslatorRegion(value.region)
+  };
+}
+
+function loadAzureTranslatorConfig() {
+  azureTranslatorConfig = null;
+  try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      return;
+    }
+    const encrypted = fs.readFileSync(getUserDataPath('azure-translator.bin'));
+    const value = JSON.parse(safeStorage.decryptString(encrypted));
+    azureTranslatorConfig = normalizeAzureConfig(value);
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.warn('Unable to read the encrypted Azure Translator credentials:', error.message);
+    }
+  }
+}
+
+function storeAzureTranslatorConfig(value) {
+  if (!safeStorage.isEncryptionAvailable()) {
+    throw new Error('Secure credential storage is unavailable on this system.');
+  }
+  const normalized = normalizeAzureConfig(value);
+  const encrypted = safeStorage.encryptString(JSON.stringify(normalized));
+  fs.mkdirSync(app.getPath('userData'), { recursive: true });
+  fs.writeFileSync(getUserDataPath('azure-translator.bin'), encrypted, { mode: 0o600 });
+  azureTranslatorConfig = normalized;
+}
+
 function openInSystemBrowser(url) {
   shell.openExternal(url).catch((error) => {
     console.warn('Unable to open the external URL:', error.message);
@@ -128,6 +176,7 @@ function getAppearanceSettings() {
   return {
     ...settings.appearance,
     autoTranslateLyrics: settings.lyrics.autoTranslate,
+    azureConfigured: Boolean(azureTranslatorConfig),
     closeAction: settings.closeAction,
     deeplConfigured: Boolean(deeplAuthKey),
     lrclibLyrics: settings.lyrics.lrclibEnabled,
@@ -219,30 +268,34 @@ async function requestLyricsJson(rawUrl, options = {}) {
   if (url.protocol !== 'https:' || (!isConfiguredProvider && !isYouTubeTimedText)) {
     throw new Error('Lyrics requests are limited to configured providers.');
   }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 10000);
-  try {
-    const response = await net.fetch(url.href, {
-      headers: {
-        'User-Agent': electronUserAgent || 'YouTube Music Me/0.1.0',
-        ...(options.headers || {})
-      },
-      signal: controller.signal
-    });
-    if (response.status === 404) {
-      return null;
+  return retryAsync(async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), options.timeoutMs || 10000);
+    try {
+      const response = await net.fetch(url.href, {
+        headers: {
+          'User-Agent': electronUserAgent || 'YouTube Music Me/0.1.0',
+          ...(options.headers || {})
+        },
+        signal: controller.signal
+      });
+      if (response.status === 404) {
+        return null;
+      }
+      if (!response.ok) {
+        throw createHttpError(`${url.hostname} returned HTTP ${response.status}`, response.status);
+      }
+      const body = await response.text();
+      if (!body || Buffer.byteLength(body, 'utf8') > 8 * 1024 * 1024) {
+        const error = new Error(`${url.hostname} returned an empty or oversized response.`);
+        error.retryable = true;
+        throw error;
+      }
+      return JSON.parse(body);
+    } finally {
+      clearTimeout(timeout);
     }
-    if (!response.ok) {
-      throw new Error(`${url.hostname} returned HTTP ${response.status}`);
-    }
-    const body = await response.text();
-    if (!body || Buffer.byteLength(body, 'utf8') > 8 * 1024 * 1024) {
-      throw new Error(`${url.hostname} returned an empty or oversized response.`);
-    }
-    return JSON.parse(body);
-  } finally {
-    clearTimeout(timeout);
-  }
+  }, { attempts: 2, baseDelayMs: 250 });
 }
 
 const lyricsService = createLyricsService({
@@ -250,55 +303,123 @@ const lyricsService = createLyricsService({
   requestJson: requestLyricsJson
 });
 
-async function translateGoogleText(text, targetLanguage) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000);
-  const body = new URLSearchParams({
-    client: 'gtx',
-    dt: 't',
-    q: text,
-    sl: 'auto',
-    tl: targetLanguage
-  });
-  try {
-    const response = await net.fetch('https://translate.googleapis.com/translate_a/single', {
-      body: body.toString(),
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-        'User-Agent': electronUserAgent || 'YouTube Music Me/0.1.0'
-      },
-      method: 'POST',
-      signal: controller.signal
+async function translateGoogleText(text, targetLanguage, attempts = 3) {
+  return retryAsync(async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    const body = new URLSearchParams({
+      client: 'gtx',
+      dt: 't',
+      q: text,
+      sl: 'auto',
+      tl: targetLanguage
     });
-    if (!response.ok) {
-      throw new Error(`Google Translate returned HTTP ${response.status}`);
+    try {
+      const response = await net.fetch('https://translate.googleapis.com/translate_a/single', {
+        body: body.toString(),
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+          'User-Agent': electronUserAgent || 'YouTube Music Me/0.1.0'
+        },
+        method: 'POST',
+        signal: controller.signal
+      });
+      if (!response.ok) {
+        throw createHttpError(`Google Translate returned HTTP ${response.status}`, response.status);
+      }
+      const responseBody = await response.text();
+      if (!responseBody || Buffer.byteLength(responseBody, 'utf8') > 2 * 1024 * 1024) {
+        const error = new Error('Google Translate response was empty or too large.');
+        error.retryable = true;
+        throw error;
+      }
+      const value = JSON.parse(responseBody);
+      const translated = Array.isArray(value?.[0])
+        ? value[0].map((segment) => segment?.[0] || '').join('')
+        : '';
+      if (!translated) {
+        const error = new Error('Google Translate returned no translated text.');
+        error.retryable = true;
+        throw error;
+      }
+      return {
+        detectedLanguage: typeof value?.[2] === 'string' ? value[2] : '',
+        text: translated.replace(/\r/g, '')
+      };
+    } finally {
+      clearTimeout(timeout);
     }
-    const responseBody = await response.text();
-    if (!responseBody || Buffer.byteLength(responseBody, 'utf8') > 2 * 1024 * 1024) {
-      throw new Error('Google Translate response was empty or too large.');
-    }
-    const value = JSON.parse(responseBody);
-    const translated = Array.isArray(value?.[0])
-      ? value[0].map((segment) => segment?.[0] || '').join('')
-      : '';
-    if (!translated) {
-      throw new Error('Google Translate returned no translated text.');
-    }
-    return {
-      detectedLanguage: typeof value?.[2] === 'string' ? value[2] : '',
-      text: translated.replace(/\r/g, '')
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
+  }, { attempts, baseDelayMs: 350 });
 }
 
 async function translateGoogleBatch(lines, targetLanguage) {
-  const response = await translateGoogleText(joinGoogleLyricsLines(lines), targetLanguage);
-  return {
-    detectedLanguage: response.detectedLanguage,
-    lines: splitGoogleLyricsText(response.text, lines.length)
-  };
+  return retryAsync(async () => {
+    const response = await translateGoogleText(joinGoogleLyricsLines(lines), targetLanguage, 1);
+    try {
+      return {
+        detectedLanguage: response.detectedLanguage,
+        lines: splitGoogleLyricsText(response.text, lines.length)
+      };
+    } catch (error) {
+      error.retryable = true;
+      throw error;
+    }
+  }, { attempts: 3, baseDelayMs: 350 });
+}
+
+async function translateAzureBatch(lines, targetLanguage, config = azureTranslatorConfig) {
+  if (!config) {
+    throw new Error('Azure Translator is selected but no credentials are configured.');
+  }
+  const url = createAzureTranslatorUrl(config.endpoint, targetLanguage);
+  return retryAsync(async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await net.fetch(url, {
+        body: JSON.stringify(lines.map((text) => ({ Text: text }))),
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'Ocp-Apim-Subscription-Key': config.key,
+          ...(config.region ? { 'Ocp-Apim-Subscription-Region': config.region } : {}),
+          'User-Agent': electronUserAgent || 'YouTube Music Me/0.1.0'
+        },
+        method: 'POST',
+        signal: controller.signal
+      });
+      const responseBody = await response.text();
+      if (!response.ok) {
+        throw createHttpError(`Azure Translator returned HTTP ${response.status}`, response.status);
+      }
+      if (!responseBody || Buffer.byteLength(responseBody, 'utf8') > 4 * 1024 * 1024) {
+        const error = new Error('Azure Translator returned an empty or oversized response.');
+        error.retryable = true;
+        throw error;
+      }
+      const value = JSON.parse(responseBody);
+      const translations = Array.isArray(value) ? value.map((item) => (
+        Array.isArray(item?.translations) ? item.translations[0] : null
+      )) : [];
+      if (translations.length !== lines.length
+        || translations.some((translation) => typeof translation?.text !== 'string')) {
+        const error = new Error('Azure Translator did not preserve the lyrics timeline.');
+        error.retryable = true;
+        throw error;
+      }
+      return {
+        detectedLanguage: value.find((item) => item?.detectedLanguage?.language)
+          ?.detectedLanguage.language || '',
+        lines: translations.map((translation) => translation.text.trim())
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }, { attempts: 3, baseDelayMs: 350 });
+}
+
+async function validateAzureTranslatorConfig(config) {
+  await translateAzureBatch(['validation'], 'en', config);
 }
 
 async function requestDeepL(pathname, authKey, options = {}) {
@@ -368,11 +489,24 @@ async function translateLyricsLines(payload = {}) {
   if (provider === 'deepl' && !deeplAuthKey) {
     throw new Error('DeepL is selected but no API Free key is configured.');
   }
-  const translatedBatches = provider === 'deepl'
-    ? await Promise.all(createDeepLLyricsPayloads(lines, targetLanguage)
-      .map((batch) => translateDeepLPayload(batch, deeplAuthKey)))
-    : await Promise.all(createGoogleLyricsBatches(lines)
-      .map((batch) => translateGoogleBatch(batch, targetLanguage)));
+  if (provider === 'azure' && !azureTranslatorConfig) {
+    throw new Error('Azure Translator is selected but no credentials are configured.');
+  }
+  const batches = provider === 'deepl'
+    ? createDeepLLyricsPayloads(lines, targetLanguage)
+    : provider === 'azure'
+      ? createAzureTranslatorBatches(lines)
+      : createGoogleLyricsBatches(lines);
+  const translatedBatches = [];
+  for (const batch of batches) {
+    translatedBatches.push(
+      provider === 'deepl'
+        ? await translateDeepLPayload(batch, deeplAuthKey)
+        : provider === 'azure'
+          ? await translateAzureBatch(batch, targetLanguage)
+          : await translateGoogleBatch(batch, targetLanguage)
+    );
+  }
   const translatedLines = translatedBatches.flatMap((batch) => batch.lines);
   if (translatedLines.length !== lines.length) {
     throw new Error('The translation service did not preserve the lyrics timeline.');
@@ -478,6 +612,64 @@ function restartApplication() {
 
 function getDeepLConfigWindowTitle(locale) {
   return `${getDeepLConfigStrings(locale).title} - ${APP_NAME}`;
+}
+
+function getAzureConfigWindowTitle(locale) {
+  return `${getAzureConfigStrings(locale).title} - ${APP_NAME}`;
+}
+
+function openAzureConfigWindow(locale = '') {
+  if (azureConfigWindow && !azureConfigWindow.isDestroyed()) {
+    azureConfigWindow.focus();
+    return azureConfigPromise;
+  }
+
+  const currentWindow = new BrowserWindow({
+    autoHideMenuBar: true,
+    backgroundColor: '#202124',
+    closable: true,
+    frame: true,
+    fullscreenable: false,
+    height: 560,
+    icon: iconPath,
+    maximizable: false,
+    minimizable: false,
+    modal: true,
+    parent: mainWindow,
+    resizable: false,
+    show: false,
+    title: getAzureConfigWindowTitle(locale),
+    webPreferences: {
+      contextIsolation: true,
+      devTools: false,
+      preload: azureConfigPreloadPath,
+      sandbox: true
+    },
+    width: 540
+  });
+  azureConfigWindow = currentWindow;
+  currentWindow.setMenuBarVisibility(false);
+  currentWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  currentWindow.once('ready-to-show', () => currentWindow.show());
+  azureConfigPromise = new Promise((resolve) => {
+    currentWindow.once('closed', () => {
+      if (azureConfigWindow === currentWindow) {
+        azureConfigWindow = null;
+      }
+      const result = getAppearanceSettings();
+      azureConfigPromise = null;
+      resolve(result);
+    });
+  });
+  currentWindow.loadFile(azureConfigPath, {
+    query: { locale: String(locale || '').slice(0, 35) }
+  }).catch((error) => {
+    console.warn('Unable to open Azure Translator configuration:', error.message);
+    if (!currentWindow.isDestroyed()) {
+      currentWindow.close();
+    }
+  });
+  return azureConfigPromise;
 }
 
 function openDeepLConfigWindow(locale = '') {
@@ -609,6 +801,9 @@ function openAuthWindow(url) {
     }
   });
   const currentAuthWindow = authWindow;
+  const restoreMainWindowOnClose = Boolean(
+    mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()
+  );
   const authContents = currentAuthWindow.webContents;
   const authSession = authContents.session;
   let authenticationCompleted = false;
@@ -686,8 +881,12 @@ function openAuthWindow(url) {
     if (authWindow === currentAuthWindow) {
       authWindow = null;
     }
-    showMainWindow();
-    if (authenticationCompleted && musicView && !musicView.webContents.isDestroyed()) {
+    if (!isQuitting && restoreMainWindowOnClose
+      && mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+      showMainWindow();
+    }
+    if (!isQuitting && authenticationCompleted
+      && musicView && !musicView.webContents.isDestroyed()) {
       setTimeout(() => {
         if (musicView && !musicView.webContents.isDestroyed()) {
           musicView.webContents.reloadIgnoringCache();
@@ -957,7 +1156,6 @@ function configureMusicView() {
 
   contents.on('did-create-window', (childWindow) => {
     childWindow.setMenuBarVisibility(false);
-    childWindow.on('closed', showMainWindow);
   });
 
   contents.on('will-navigate', (event, url) => {
@@ -981,6 +1179,30 @@ function configureMusicView() {
 }
 
 function installIpcHandlers() {
+  const isMusicViewSender = (event) => Boolean(
+    musicView
+    && !musicView.webContents.isDestroyed()
+    && event.sender === musicView.webContents
+  );
+  const isSplashSender = (event) => Boolean(
+    mainWindow
+    && !mainWindow.isDestroyed()
+    && event.sender === mainWindow.webContents
+  );
+  ipcMain.on('translation:get-azure-strings', (event) => {
+    if (!azureConfigWindow || event.sender !== azureConfigWindow.webContents) {
+      event.returnValue = null;
+      return;
+    }
+    let locale = '';
+    try {
+      locale = new URL(event.sender.getURL()).searchParams.get('locale') || '';
+    } catch {}
+    event.returnValue = {
+      ...getAzureConfigStrings(locale),
+      languageTag: getAppStrings(locale).languageTag
+    };
+  });
   ipcMain.on('translation:get-deepl-strings', (event) => {
     if (!deeplConfigWindow || event.sender !== deeplConfigWindow.webContents) {
       event.returnValue = null;
@@ -1011,6 +1233,10 @@ function installIpcHandlers() {
     if (patch.lyricsTranslationProvider !== undefined
       && requestedTranslationProvider === 'deepl' && !deeplAuthKey) {
       throw new Error('Configure a DeepL API Free key before selecting DeepL.');
+    }
+    if (patch.lyricsTranslationProvider !== undefined
+      && requestedTranslationProvider === 'azure' && !azureTranslatorConfig) {
+      throw new Error('Configure Azure Translator credentials before selecting Azure.');
     }
 
     const nextAppearance = {
@@ -1053,6 +1279,32 @@ function installIpcHandlers() {
     }
     return openDeepLConfigWindow(payload.locale);
   });
+  ipcMain.handle('translation:open-azure-config', (event, payload = {}) => {
+    if (!musicView || event.sender !== musicView.webContents) {
+      throw new Error('Azure Translator configuration is only available to the music view.');
+    }
+    return openAzureConfigWindow(payload.locale);
+  });
+  ipcMain.handle('translation:azure-save', async (event, payload = {}) => {
+    if (!azureConfigWindow || event.sender !== azureConfigWindow.webContents) {
+      throw new Error('Azure Translator credentials are only accepted from the local configuration window.');
+    }
+    const configContents = event.sender;
+    const config = normalizeAzureConfig(payload);
+    await validateAzureTranslatorConfig(config);
+    if (!azureConfigWindow || azureConfigWindow.isDestroyed()
+      || configContents !== azureConfigWindow.webContents) {
+      throw new Error('Azure Translator configuration was closed before validation completed.');
+    }
+    storeAzureTranslatorConfig(config);
+    lyricsTranslationCache.clear();
+    return { configured: true };
+  });
+  ipcMain.on('translation:azure-close', (event) => {
+    if (azureConfigWindow && event.sender === azureConfigWindow.webContents) {
+      azureConfigWindow.close();
+    }
+  });
   ipcMain.handle('translation:deepl-save', async (event, payload = {}) => {
     if (!deeplConfigWindow || event.sender !== deeplConfigWindow.webContents) {
       throw new Error('DeepL credentials are only accepted from the local configuration window.');
@@ -1089,6 +1341,15 @@ function installIpcHandlers() {
     }
     return translateLyricsLines(payload);
   });
+  ipcMain.handle('lyrics:detect-language', (event, payload = {}) => {
+    if (!musicView || event.sender !== musicView.webContents) {
+      throw new Error('Lyrics language detection is only available to the music view.');
+    }
+    const lines = Array.isArray(payload.lines)
+      ? payload.lines.slice(0, 500).map((line) => String(line || '').trim().slice(0, 1000))
+      : [];
+    return detectLyricsLanguage(lines);
+  });
   ipcMain.on('desktop-lyrics:update', (event, payload) => {
     if (musicView && event.sender === musicView.webContents) {
       desktopLyricsState = sanitizeDesktopLyricsPayload(payload);
@@ -1112,20 +1373,41 @@ function installIpcHandlers() {
     }
     restartApplication();
   });
-  ipcMain.on('window:minimize', () => mainWindow?.minimize());
-  ipcMain.on('window:toggle-maximize', () => {
-    if (!mainWindow) {
+  ipcMain.on('window:minimize', (event) => {
+    if (isMusicViewSender(event) && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.minimize();
+    }
+  });
+  ipcMain.on('window:toggle-maximize', (event) => {
+    if (!isMusicViewSender(event) || !mainWindow || mainWindow.isDestroyed()) {
       return;
     }
     mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
   });
-  ipcMain.on('window:close', () => requestCloseDecision());
-  ipcMain.on('window:minimize-to-tray', () => captureBeforeWindowAction(() => mainWindow?.hide()));
-  ipcMain.on('window:quit', () => captureBeforeWindowAction(() => {
-    isQuitting = true;
-    app.quit();
-  }));
-  ipcMain.on('window:get-state', sendWindowState);
+  ipcMain.on('window:close', (event) => {
+    if (isMusicViewSender(event)) {
+      requestCloseDecision();
+    }
+  });
+  ipcMain.on('window:minimize-to-tray', (event) => {
+    if (isMusicViewSender(event)) {
+      captureBeforeWindowAction(() => mainWindow?.hide());
+    }
+  });
+  ipcMain.on('window:quit', (event) => {
+    if (!isMusicViewSender(event)) {
+      return;
+    }
+    captureBeforeWindowAction(() => {
+      isQuitting = true;
+      app.quit();
+    });
+  });
+  ipcMain.on('window:get-state', (event) => {
+    if (isMusicViewSender(event)) {
+      sendWindowState();
+    }
+  });
   ipcMain.on('context-menu:action', (event, payload = {}) => {
     if (!musicView || event.sender !== musicView.webContents || musicView.webContents.isDestroyed()) {
       return;
@@ -1168,12 +1450,19 @@ function installIpcHandlers() {
     maybeRevealSplash();
   });
   ipcMain.on('splash:transition-complete', (event) => {
-    if (mainWindow && event.sender === mainWindow.webContents) {
+    if (isSplashSender(event)) {
       revealMusicView();
     }
   });
-  ipcMain.on('splash:retry', loadMusic);
-  ipcMain.on('splash:quit', () => {
+  ipcMain.on('splash:retry', (event) => {
+    if (isSplashSender(event)) {
+      loadMusic();
+    }
+  });
+  ipcMain.on('splash:quit', (event) => {
+    if (!isSplashSender(event)) {
+      return;
+    }
     isQuitting = true;
     app.quit();
   });
@@ -1290,6 +1579,7 @@ if (!hasSingleInstanceLock) {
       app.setAppUserModelId('com.muxyang.youtubemusicme');
     }
     loadDeepLAuthKey();
+    loadAzureTranslatorConfig();
     const musicSession = session.fromPartition('persist:youtube-music');
     electronUserAgent = musicSession.getUserAgent();
     try {

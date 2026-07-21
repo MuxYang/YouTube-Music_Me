@@ -7,6 +7,7 @@ const path = require('node:path');
 const {
   getAppStrings,
   getAppearanceStrings,
+  getAzureConfigStrings,
   getDeepLConfigStrings,
   localeBundles,
   normalizeUiLocale,
@@ -19,6 +20,7 @@ test('normalizes supported UI locales to locale filenames and falls back to Engl
   assert.equal(normalizeUiLocale('ja-JP'), 'en-us');
   assert.equal(getAppStrings('zh-TW').close, '關閉');
   assert.equal(getAppearanceStrings('zh-CN').otherCategory, '其他');
+  assert.equal(getAzureConfigStrings('en-US').title, 'Configure Azure Translator');
   assert.equal(getDeepLConfigStrings('en-US').title, 'Configure DeepL');
 });
 

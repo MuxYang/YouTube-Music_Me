@@ -57,7 +57,7 @@ function normalizeComparable(value) {
 }
 
 function containsJapanese(value) {
-  return /[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff]/u.test(String(value || ''));
+  return /[\u3040-\u30ff\u31f0-\u31ff]/u.test(String(value || ''));
 }
 
 function isLikelyRomanizedLyrics(value, track = {}) {
@@ -65,7 +65,9 @@ function isLikelyRomanizedLyrics(value, track = {}) {
   const titles = [track.title, ...(track.titleAliases || [])]
     .map(stripPresentationNoise)
     .join(' ');
-  if (!containsJapanese(titles)) {
+  const japaneseTrack = track.isJapanese === true
+    || containsJapanese(titles);
+  if (!japaneseTrack) {
     return false;
   }
   const text = String(value || '').replace(/\[[^\]]+\]/g, ' ').trim();
@@ -187,6 +189,7 @@ function buildLyricsSearchHints(track = {}) {
 
 function createLyricsLookupCacheKey(hints = {}) {
   return JSON.stringify({
+    albums: uniqueText(hints.albums || [], 4).map(normalizeComparable),
     artists: uniqueText(hints.artists || [], 4).map(normalizeComparable),
     duration: Math.round(Number(hints.duration) || 0),
     titles: uniqueText(hints.titles || [], 4).map(normalizeComparable),
@@ -232,7 +235,10 @@ function scoreLyricsCandidate(candidate, hints, options = {}) {
     return Number.NEGATIVE_INFINITY;
   }
   if (requireSyncedLyrics && hints.isJapanese
-    && isLikelyRomanizedLyrics(syncedLyrics, { title: hints.titles.join(' ') })) {
+    && isLikelyRomanizedLyrics(syncedLyrics, {
+      isJapanese: true,
+      title: hints.titles.join(' ')
+    })) {
     return Number.NEGATIVE_INFINITY;
   }
 
@@ -328,7 +334,7 @@ function parseSyncedLyrics(value) {
     }
   }
   return parsed
-    .filter((line) => Number.isFinite(line.time))
+    .filter((line) => Number.isFinite(line.time) && line.text)
     .sort((left, right) => left.time - right.time);
 }
 
@@ -435,12 +441,41 @@ function normalizeTranslationLanguage(value) {
   return language.match(/^[a-z]{2,3}(?:-[a-z0-9]{2,8})?/u)?.[0] || 'en';
 }
 
+function haveSameLanguage(left, right) {
+  const getFamily = (value) => String(value || '').toLowerCase().split(/[-_]/)[0];
+  const leftFamily = getFamily(left);
+  const rightFamily = getFamily(right);
+  if (!leftFamily || leftFamily !== rightFamily) {
+    return false;
+  }
+  if (leftFamily === 'zh') {
+    return normalizeTranslationLanguage(left) === normalizeTranslationLanguage(right);
+  }
+  return true;
+}
+
+function shouldOfferLyricsTranslation({
+  declaredLanguage = '',
+  detectedLanguage = '',
+  source = '',
+  targetLanguage = ''
+} = {}) {
+  if (source === 'youtube-cc'
+    && declaredLanguage
+    && haveSameLanguage(declaredLanguage, targetLanguage)) {
+    return false;
+  }
+  return Boolean(detectedLanguage)
+    && !haveSameLanguage(detectedLanguage, targetLanguage);
+}
+
 module.exports = {
   alignSyncedTranslation,
   buildLyricsSearchHints,
   canSeekLyricsTimeline,
   containsJapanese,
   createLyricsLookupCacheKey,
+  haveSameLanguage,
   isLikelyRomanizedLyrics,
   isLyricsMetadataLine,
   normalizeComparable,
@@ -452,6 +487,7 @@ module.exports = {
   selectLyricsTranslationSource,
   selectLyricsSearchPairs,
   selectBestLyricsCandidate,
+  shouldOfferLyricsTranslation,
   stripPresentationNoise,
   textSimilarity: editSimilarity
 };

@@ -56,7 +56,9 @@ function normalizeSettings(value = {}) {
     neteaseEnabled,
     neteaseTranslationSource: neteaseEnabled
       && sourceLyrics.neteaseTranslationSource === true,
-    translationProvider: sourceLyrics.translationProvider === 'deepl' ? 'deepl' : 'google'
+    translationProvider: ['deepl', 'azure'].includes(sourceLyrics.translationProvider)
+      ? sourceLyrics.translationProvider
+      : 'google'
   };
 
   const normalized = {

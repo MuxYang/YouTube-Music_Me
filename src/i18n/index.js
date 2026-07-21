@@ -29,6 +29,10 @@ function getAppearanceStrings(locale) {
   return getLocaleBundle(locale).appearance;
 }
 
+function getAzureConfigStrings(locale) {
+  return getLocaleBundle(locale).azureConfig;
+}
+
 function getDeepLConfigStrings(locale) {
   return getLocaleBundle(locale).deeplConfig;
 }
@@ -41,6 +45,7 @@ function parseYouTubeLanguagePreference(value) {
 module.exports = {
   getAppStrings,
   getAppearanceStrings,
+  getAzureConfigStrings,
   getDeepLConfigStrings,
   getLocaleBundle,
   localeBundles,

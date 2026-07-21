@@ -10,11 +10,13 @@ const {
 const {
   alignSyncedTranslation,
   canSeekLyricsTimeline,
+  haveSameLanguage,
   isLikelyRomanizedLyrics,
   isLyricsMetadataLine,
   normalizeTranslationLanguage,
   parseSyncedLyrics,
   selectLyricsTranslationSource,
+  shouldOfferLyricsTranslation,
   stripPresentationNoise
 } = require('../lyrics');
 const {
@@ -36,6 +38,7 @@ const STYLE_PANEL_ID = 'ytm-desktop-style-panel';
 const LOADING_GUARD_ID = 'ytm-desktop-loading-guard';
 const LYRICS_PANEL_ID = 'ytm-desktop-lyrics-panel';
 const SETTING_PICKER_ID = 'ytm-desktop-setting-picker';
+const SEARCH_BACKDROP_ID = 'ytm-desktop-search-backdrop';
 const MENU_SURFACE_SELECTOR = [
   'ytmusic-multi-page-menu-renderer',
   'ytd-multi-page-menu-renderer',
@@ -63,6 +66,7 @@ let lyricsRetryKey = '';
 let lyricsProviderRetryPending = false;
 let lyricsUserScrollUntil = 0;
 let lyricsTranslationRequestToken = 0;
+let lyricsLanguageDetectionRequestToken = 0;
 let pendingLyricsIntegrationRefresh = false;
 let appearanceSettingsInitialized = false;
 let currentUiLocale = '';
@@ -72,15 +76,20 @@ let languageReloadTimer = null;
 let windowIsMaximized = false;
 let surfaceAnimationFrame = null;
 let surfaceAnimationObserver = null;
+let surfaceResizeObserver = null;
+let lastSurfaceTriggerPoint = null;
 const lyricsTranslationCache = new Map();
 const settingsContentAnimationTimes = new WeakMap();
 const settingsTouchSelections = new WeakMap();
 const settingsCloseOverlays = new WeakSet();
+const settingsOpenDialogs = new WeakSet();
+const observedSurfaceSizes = new WeakSet();
 const surfaceAnimationTimes = new Map();
 const surfaceVisibility = new WeakMap();
 let appearanceSettings = {
   animations: false,
   autoTranslateLyrics: false,
+  azureConfigured: false,
   closeAction: 'tray',
   deeplConfigured: false,
   lrclibLyrics: false,
@@ -479,7 +488,10 @@ function getTranslationSourceText(provider, strings = getAppearanceStrings()) {
   if (provider === 'netease') {
     return strings.neteaseTranslationSource;
   }
-  return provider === 'deepl' ? strings.deeplTranslationSource : strings.translationSource;
+  if (provider === 'deepl') {
+    return strings.deeplTranslationSource;
+  }
+  return provider === 'azure' ? strings.azureTranslationSource : strings.translationSource;
 }
 
 function getLyricsSourceAttribution(panel, originalText, strings = getAppearanceStrings()) {
@@ -756,9 +768,30 @@ function updateAppearanceControls() {
         : strings.deeplConfigure;
     }
   }
+  const azureRow = document.querySelector(
+    '.ytm-desktop-setting-row[data-setting-row="azureApiKey"]'
+  );
+  if (azureRow) {
+    const strings = getAppearanceStrings();
+    azureRow.hidden = !appearanceSettings.lrclibLyrics
+      || appearanceSettings.lyricsTranslationProvider !== 'azure';
+    const summary = azureRow.querySelector('.ytm-desktop-setting-summary');
+    const button = azureRow.querySelector('.ytm-desktop-setting-action');
+    if (summary) {
+      summary.textContent = appearanceSettings.azureConfigured
+        ? strings.azureApiKeyConfiguredDescription
+        : strings.azureApiKeyMissingDescription;
+    }
+    if (button) {
+      button.textContent = appearanceSettings.azureConfigured
+        ? strings.azureUpdate
+        : strings.azureConfigure;
+    }
+  }
 }
 
 function applyAppearanceSettings(value = {}, options = {}) {
+  const animationsWereEnabled = appearanceSettings.animations;
   const autoTranslateWasEnabled = appearanceSettings.autoTranslateLyrics;
   const previousLyricsEnabled = appearanceSettings.lrclibLyrics;
   const previousNeteaseEnabled = appearanceSettings.neteaseLyrics;
@@ -767,12 +800,15 @@ function applyAppearanceSettings(value = {}, options = {}) {
   appearanceSettings = {
     animations: value.animations === true,
     autoTranslateLyrics: value.autoTranslateLyrics === true,
+    azureConfigured: value.azureConfigured === true,
     closeAction: ['ask', 'tray', 'quit'].includes(value.closeAction)
       ? value.closeAction
       : 'tray',
     deeplConfigured: value.deeplConfigured === true,
     lrclibLyrics: value.lrclibLyrics === true,
-    lyricsTranslationProvider: value.lyricsTranslationProvider === 'deepl' ? 'deepl' : 'google',
+    lyricsTranslationProvider: ['deepl', 'azure'].includes(value.lyricsTranslationProvider)
+      ? value.lyricsTranslationProvider
+      : 'google',
     neteaseLyrics: value.neteaseLyrics === true,
     neteaseTranslationSource: value.neteaseTranslationSource === true,
     translucentSurfaces: value.translucentSurfaces === true
@@ -823,6 +859,11 @@ function applyAppearanceSettings(value = {}, options = {}) {
     pendingLyricsIntegrationRefresh = false;
     refreshLyricsIntegration();
   }
+  if (appearanceSettings.animations && !animationsWereEnabled) {
+    for (const surface of getAnimationSurfaces()) {
+      surfaceVisibility.set(surface, false);
+    }
+  }
   requestSurfaceAnimationRefresh();
   if (!deferLyricsApply && !pendingLyricsIntegrationRefresh) {
     window.queueMicrotask(refreshAutomaticLyricsTranslation);
@@ -833,7 +874,28 @@ function isVisibleSurface(element) {
   if (!element.isConnected || element.hidden) {
     return false;
   }
-
+  if (element.matches('ytmusic-search-box #suggestion-list')) {
+    const searchInput = element.closest('ytmusic-search-box')?.querySelector(
+      'input[role="combobox"]'
+    );
+    if (searchInput?.getAttribute('aria-expanded') === 'false') {
+      return false;
+    }
+    const hasVisibleContent = [...element.children].some((child) => {
+      if (child.matches('dom-repeat, template')) {
+        return false;
+      }
+      const childBounds = child.getBoundingClientRect();
+      const childStyle = getComputedStyle(child);
+      return childBounds.width > 0
+        && childBounds.height > 0
+        && childStyle.display !== 'none'
+        && childStyle.visibility !== 'hidden';
+    });
+    if (!hasVisibleContent) {
+      return false;
+    }
+  }
   const bounds = element.getBoundingClientRect();
   const style = getComputedStyle(element);
   return bounds.width > 0
@@ -849,86 +911,125 @@ function getAnimationSurfaces() {
   ));
 }
 
-function hasNativeEntranceAnimation(element, includeDescendants = true) {
-  return element.getAnimations({ subtree: true }).some((animation) => {
-    if (!includeDescendants && animation.effect?.target !== element) {
-      return false;
-    }
-    if (String(animation.animationName || '').startsWith('ytm-desktop-')) {
-      return false;
-    }
-    const timing = animation.effect?.getComputedTiming?.();
-    return animation.playState === 'running'
-      && Number(timing?.iterations) === 1
-      && Number(timing?.duration) >= 60
-      && Number(timing?.duration) <= 700;
-  });
-}
-
 function getSurfaceAnimationKey(surface) {
   return surface.matches('ytmusic-search-box #suggestion-list')
     ? 'search-suggestions'
     : 'account-menu';
 }
 
+function rememberSurfaceTriggerPoint(event) {
+  lastSurfaceTriggerPoint = {
+    time: performance.now(),
+    x: event.clientX,
+    y: event.clientY
+  };
+}
+
+function getSurfaceRevealDirection(surface) {
+  if (surface.matches('ytmusic-search-box #suggestion-list')) {
+    return 'down';
+  }
+  const point = lastSurfaceTriggerPoint;
+  if (!point || performance.now() - point.time > 1500) {
+    return 'down';
+  }
+  const bounds = surface.getBoundingClientRect();
+  if (bounds.bottom <= point.y + 24) {
+    return 'up';
+  }
+  if (bounds.top >= point.y - 24) {
+    return 'down';
+  }
+  return point.y > bounds.top + bounds.height / 2 ? 'up' : 'down';
+}
+
+function syncSearchBackdrop(surface, visible) {
+  let backdrop = document.getElementById(SEARCH_BACKDROP_ID);
+  if (!appearanceSettings.translucentSurfaces || !visible) {
+    if (backdrop) {
+      backdrop.hidden = true;
+    }
+    return null;
+  }
+  if (!backdrop) {
+    backdrop = document.createElement('div');
+    backdrop.id = SEARCH_BACKDROP_ID;
+    backdrop.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(backdrop);
+  }
+  const bounds = surface.getBoundingClientRect();
+  backdrop.style.borderRadius = getComputedStyle(surface).borderRadius;
+  backdrop.style.height = `${bounds.height}px`;
+  backdrop.style.left = `${bounds.left}px`;
+  backdrop.style.top = `${bounds.top}px`;
+  backdrop.style.width = `${bounds.width}px`;
+  backdrop.hidden = false;
+  return backdrop;
+}
+
 function refreshSurfaceAnimations() {
-  surfaceAnimationFrame = null;
   for (const surface of getAnimationSurfaces()) {
+    if (surfaceResizeObserver && !observedSurfaceSizes.has(surface)) {
+      surfaceResizeObserver.observe(surface);
+      observedSurfaceSizes.add(surface);
+    }
     const visible = isVisibleSurface(surface);
     const wasVisible = surfaceVisibility.get(surface) === true;
     surfaceVisibility.set(surface, visible);
-
-    if (!appearanceSettings.animations || !visible) {
-      surface.classList.remove('ytm-desktop-surface-entering');
-      continue;
-    }
-    if (wasVisible) {
+    const searchBackdrop = surface.matches('ytmusic-search-box #suggestion-list')
+      ? syncSearchBackdrop(surface, visible)
+      : null;
+    if (!appearanceSettings.animations
+      || window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      || !visible
+      || wasVisible) {
       continue;
     }
 
     const animationKey = getSurfaceAnimationKey(surface);
     const now = performance.now();
-    const nativeAnimationRunning = hasNativeEntranceAnimation(surface);
-    if (
-      now - (surfaceAnimationTimes.get(animationKey) || 0) < 400
-      || nativeAnimationRunning
-    ) {
-      if (nativeAnimationRunning) {
-        surfaceAnimationTimes.set(animationKey, now);
-      }
+    if (now - (surfaceAnimationTimes.get(animationKey) || 0) < 300) {
       continue;
     }
     surfaceAnimationTimes.set(animationKey, now);
-    if (surface.classList.contains('ytm-desktop-surface-entering')) {
-      surface.classList.remove('ytm-desktop-surface-entering');
-      void surface.offsetWidth;
+    const revealDirection = getSurfaceRevealDirection(surface);
+    for (const target of [searchBackdrop, surface].filter(Boolean)) {
+      const animation = target.animate([
+        {
+          clipPath: revealDirection === 'up'
+            ? 'inset(100% 0 0 0 round 8px)'
+            : 'inset(0 0 100% 0 round 8px)'
+        },
+        { clipPath: 'inset(0 0 0 0 round 8px)' }
+      ], {
+        duration: 180,
+        easing: 'cubic-bezier(0.2, 0, 0, 1)',
+        fill: 'both'
+      });
+      animation.addEventListener('finish', () => animation.cancel(), { once: true });
     }
-    surface.classList.add('ytm-desktop-surface-entering');
-    window.setTimeout(() => {
-      surface.classList.remove('ytm-desktop-surface-entering');
-    }, 220);
   }
 }
 
 function requestSurfaceAnimationRefresh() {
+  refreshSurfaceAnimations();
   if (!surfaceAnimationFrame) {
-    surfaceAnimationFrame = window.requestAnimationFrame(refreshSurfaceAnimations);
+    surfaceAnimationFrame = window.requestAnimationFrame(() => {
+      surfaceAnimationFrame = null;
+      refreshSurfaceAnimations();
+    });
   }
 }
 
 function handleSurfaceMutations(records) {
   const relevant = records.some((record) => {
     const target = record.target instanceof Element ? record.target : null;
-    if (
-      target?.matches(SURFACE_SELECTOR)
-      || target?.matches('ytmusic-nav-bar')
+    if (target?.matches(SURFACE_SELECTOR)
       || target?.matches('tp-yt-iron-dropdown, ytmusic-popup-container, ytd-popup-container')
       || target?.closest('ytmusic-search-box')
-      || target?.closest(MENU_SURFACE_SELECTOR)
-    ) {
+      || target?.closest(MENU_SURFACE_SELECTOR)) {
       return true;
     }
-
     return [...record.addedNodes, ...record.removedNodes].some((node) => (
       node instanceof Element
       && (node.matches(SURFACE_SELECTOR) || Boolean(node.querySelector(SURFACE_SELECTOR)))
@@ -943,10 +1044,10 @@ function installSurfaceAnimations() {
   if (surfaceAnimationObserver) {
     return;
   }
-
   surfaceAnimationObserver = new MutationObserver(handleSurfaceMutations);
+  surfaceResizeObserver = new ResizeObserver(requestSurfaceAnimationRefresh);
   surfaceAnimationObserver.observe(document.documentElement, {
-    attributeFilter: ['class', 'hidden', 'open', 'style'],
+    attributeFilter: ['aria-expanded', 'class', 'hidden', 'open', 'style'],
     attributes: true,
     childList: true,
     subtree: true
@@ -962,6 +1063,17 @@ function closeConsentDialog(result) {
   if (dialog._timer) {
     window.clearInterval(dialog._timer);
   }
+  const settingsOverlay = dialog._settingsOverlay;
+  if (settingsOverlay) {
+    settingsOverlay.noCancelOnEscKey = dialog._previousNoCancelOnEscKey;
+    settingsOverlay.noCancelOnOutsideClick = dialog._previousNoCancelOnOutsideClick;
+    if (!dialog._hadNoCancelOnEscKeyAttribute) {
+      settingsOverlay.removeAttribute('no-cancel-on-esc-key');
+    }
+    if (!dialog._hadNoCancelOnOutsideClickAttribute) {
+      settingsOverlay.removeAttribute('no-cancel-on-outside-click');
+    }
+  }
   dialog.remove();
   dialog._resolve?.(result);
 }
@@ -974,6 +1086,9 @@ function showSettingConsent(kind) {
   const isChinese = language.startsWith('zh');
   const waitSeconds = isNeteaseChineseSource || (isNetease && !isChinese) ? 5 : 3;
   const backdrop = document.createElement('div');
+  const settingsDialog = document.querySelector('ytmusic-settings-page')?.closest('ytmusic-dialog');
+  const settingsOverlay = settingsDialog?.querySelector('tp-yt-paper-dialog, paper-dialog')
+    || settingsDialog;
   const surface = document.createElement('section');
   const heading = document.createElement('h2');
   const description = document.createElement('p');
@@ -983,6 +1098,19 @@ function showSettingConsent(kind) {
   surface.className = 'ytm-material-dialog';
   surface.setAttribute('role', 'dialog');
   surface.setAttribute('aria-modal', 'true');
+  if (settingsOverlay) {
+    backdrop._settingsOverlay = settingsOverlay;
+    backdrop._previousNoCancelOnEscKey = settingsOverlay.noCancelOnEscKey === true;
+    backdrop._previousNoCancelOnOutsideClick = settingsOverlay.noCancelOnOutsideClick === true;
+    backdrop._hadNoCancelOnEscKeyAttribute = settingsOverlay.hasAttribute('no-cancel-on-esc-key');
+    backdrop._hadNoCancelOnOutsideClickAttribute = settingsOverlay.hasAttribute(
+      'no-cancel-on-outside-click'
+    );
+    settingsOverlay.noCancelOnEscKey = true;
+    settingsOverlay.noCancelOnOutsideClick = true;
+    settingsOverlay.setAttribute('no-cancel-on-esc-key', '');
+    settingsOverlay.setAttribute('no-cancel-on-outside-click', '');
+  }
   heading.textContent = isNeteaseChineseSource
     ? strings.neteaseChineseSourceConsentTitle
     : isNetease ? strings.neteaseConsentTitle : strings.lrclibConsentTitle;
@@ -1016,7 +1144,7 @@ function showSettingConsent(kind) {
       closeConsentDialog(false);
     }
   });
-  document.body.appendChild(backdrop);
+  (settingsDialog || document.body).appendChild(backdrop);
   window.requestAnimationFrame(() => backdrop.classList.add('open'));
   let remaining = waitSeconds;
   backdrop._timer = window.setInterval(() => {
@@ -1044,6 +1172,20 @@ async function showDeepLConfigurationDialog() {
     return nextSettings.deeplConfigured === true;
   } catch (error) {
     console.warn('Unable to open DeepL configuration:', error.message);
+    return false;
+  }
+}
+
+async function showAzureConfigurationDialog() {
+  closeSettingPicker();
+  try {
+    const nextSettings = await ipcRenderer.invoke('translation:open-azure-config', {
+      locale: document.documentElement.lang
+    });
+    applyAppearanceSettings(nextSettings);
+    return nextSettings.azureConfigured === true;
+  } catch (error) {
+    console.warn('Unable to open Azure Translator configuration:', error.message);
     return false;
   }
 }
@@ -1147,6 +1289,7 @@ function positionSettingPicker(picker, trigger) {
   const pickerHeight = picker.getBoundingClientRect().height;
   const opensAbove = triggerBounds.bottom + pickerHeight + margin > window.innerHeight
     && triggerBounds.top >= pickerHeight + margin;
+  picker.dataset.openDirection = opensAbove ? 'up' : 'down';
   const top = opensAbove
     ? triggerBounds.top - pickerHeight - 4
     : triggerBounds.bottom + 4;
@@ -1194,6 +1337,15 @@ function openSettingPicker(trigger) {
           && !appearanceSettings.deeplConfigured) {
           closeSettingPicker();
           const configured = await showDeepLConfigurationDialog();
+          if (!configured) {
+            trigger.focus({ preventScroll: true });
+            return;
+          }
+        }
+        if (key === 'lyricsTranslationProvider' && option.value === 'azure'
+          && !appearanceSettings.azureConfigured) {
+          closeSettingPicker();
+          const configured = await showAzureConfigurationDialog();
           if (!configured) {
             trigger.focus({ preventScroll: true });
             return;
@@ -1307,6 +1459,32 @@ function createDeepLKeyRow(strings) {
   return row;
 }
 
+function createAzureKeyRow(strings) {
+  const row = document.createElement('div');
+  const content = document.createElement('div');
+  const title = document.createElement('div');
+  const summary = document.createElement('div');
+  const button = document.createElement('button');
+  row.className = 'ytm-desktop-setting-row ytm-desktop-setting-select-row';
+  row.dataset.settingRow = 'azureApiKey';
+  content.className = 'ytm-desktop-setting-copy';
+  title.className = 'ytm-desktop-setting-title';
+  title.textContent = strings.azureApiKeyTitle;
+  summary.className = 'ytm-desktop-setting-summary';
+  summary.textContent = appearanceSettings.azureConfigured
+    ? strings.azureApiKeyConfiguredDescription
+    : strings.azureApiKeyMissingDescription;
+  button.type = 'button';
+  button.className = 'ytm-desktop-setting-action';
+  button.textContent = appearanceSettings.azureConfigured
+    ? strings.azureUpdate
+    : strings.azureConfigure;
+  button.addEventListener('click', () => showAzureConfigurationDialog());
+  content.append(title, summary);
+  row.append(content, button);
+  return row;
+}
+
 function createStylePanel() {
   const strings = getAppearanceStrings();
   const panel = document.createElement('section');
@@ -1352,10 +1530,12 @@ function createStylePanel() {
       strings.translationProviderDescription,
       [
         { label: strings.translationProviderGoogle, value: 'google' },
-        { label: strings.translationProviderDeepL, value: 'deepl' }
+        { label: strings.translationProviderDeepL, value: 'deepl' },
+        { label: strings.translationProviderAzure, value: 'azure' }
       ]
     ),
     createDeepLKeyRow(strings),
+    createAzureKeyRow(strings),
     createAppearanceSelectRow(
       'closeAction',
       strings.closeActionTitle,
@@ -1384,10 +1564,7 @@ function playSettingsContentPhase(content, phase) {
 
   const now = performance.now();
   const times = settingsContentAnimationTimes.get(content) || {};
-  if (
-    now - (times[phase] || 0) < 350
-    || (phase === 'entering' && hasNativeEntranceAnimation(content, false))
-  ) {
+  if (now - (times[phase] || 0) < 350) {
     return;
   }
   times[phase] = now;
@@ -1686,6 +1863,21 @@ function bindSettingsCloseLifecycle(settingsDialog) {
   });
 }
 
+function animateSettingsOpen(settingsDialog) {
+  if (!settingsDialog || settingsOpenDialogs.has(settingsDialog)) {
+    return;
+  }
+  settingsOpenDialogs.add(settingsDialog);
+  if (!appearanceSettings.animations
+    || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    return;
+  }
+  settingsDialog.classList.add('ytm-desktop-settings-opening');
+  window.setTimeout(() => {
+    settingsDialog.classList.remove('ytm-desktop-settings-opening');
+  }, 210);
+}
+
 function installAppearanceSettingsPage() {
   for (const settingsPage of document.querySelectorAll('ytmusic-settings-page')) {
     const menu = settingsPage.querySelector('.category-menu');
@@ -1708,6 +1900,7 @@ function installAppearanceSettingsPage() {
     bindSettingsMenuKeyboard(settingsPage, menu, styleItem);
     const settingsDialog = nativeCollection.closest('ytmusic-dialog');
     settingsDialog?.classList.add('ytm-desktop-settings-dialog');
+    animateSettingsOpen(settingsDialog);
     bindSettingsCloseLifecycle(settingsDialog);
     if (needsStylePanel) {
       updateAppearanceControls();
@@ -1763,6 +1956,12 @@ function interceptSettingsClose(event) {
 
 function interceptSettingsEscape(event) {
   if (event.key !== 'Escape') {
+    return;
+  }
+  if (document.getElementById(CONSENT_DIALOG_ID)) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeConsentDialog(false);
     return;
   }
   if (closeSettingPicker(true)) {
@@ -2311,10 +2510,12 @@ function pollPlayback() {
       document.documentElement.dataset.ytmDesktopSongState = 'waiting-for-track';
       return;
     }
+    let trackHandledEarly = false;
     if (currentPlaybackSnapshot?.videoId
       && currentPlaybackSnapshot.videoId !== sample.videoId
       && currentLyricsTrack?.videoId !== sample.videoId) {
       handleDetectedTrackChange(sample);
+      trackHandledEarly = true;
     }
     const observation = songStateMonitor.observe({
       durationHint: sample.durationHint,
@@ -2336,7 +2537,7 @@ function pollPlayback() {
         duration: observation.timing?.duration || sample.track.duration
       }
     };
-    if (observation.trackChanged) {
+    if (observation.initial || observation.trackChanged) {
       currentMetadataKey = '';
     }
     currentPlaybackSnapshot = snapshot;
@@ -2346,10 +2547,10 @@ function pollPlayback() {
       trackChanged: observation.trackChanged,
       videoId: snapshot.videoId
     });
-    if (observation.trackChanged) {
+    if ((observation.initial || observation.trackChanged) && !trackHandledEarly) {
       handleDetectedTrackChange(snapshot);
     }
-    publishMediaSession(snapshot, observation.trackChanged);
+    publishMediaSession(snapshot, observation.initial || observation.trackChanged);
     requestLyricsRefresh();
   } catch (error) {
     document.documentElement.dataset.ytmDesktopSongState = `error:${error.message}`;
@@ -2524,7 +2725,7 @@ function publishDesktopLyricsState(panel = getCurrentLyricsPanel()) {
     return;
   }
   const renderedLines = panel
-    ? [...panel.querySelectorAll('.ytm-desktop-lyrics-line, .ytm-desktop-lyrics-spacer')]
+    ? [...panel.querySelectorAll('.ytm-desktop-lyrics-line')]
     : [];
   const translated = panel?.dataset.translated === 'true';
   const lines = currentLyricsResult.lines.map((line, index) => ({
@@ -2563,6 +2764,11 @@ function resetLyricsTranslation(panel, hideButton = false) {
   button.setAttribute('aria-pressed', 'false');
 }
 
+function setLyricsTranslationUnavailable(panel, unavailable) {
+  panel.dataset.translationUnavailable = String(unavailable);
+  panel.querySelector('.ytm-desktop-lyrics-translate').hidden = unavailable;
+}
+
 function applyLyricsTranslation(
   panel,
   translatedLines,
@@ -2599,22 +2805,9 @@ function applyLyricsTranslation(
   publishDesktopLyricsState(panel);
 }
 
-function haveSameLanguage(left, right) {
-  const getFamily = (value) => String(value || '').toLowerCase().split(/[-_]/)[0];
-  const leftFamily = getFamily(left);
-  const rightFamily = getFamily(right);
-  if (!leftFamily || leftFamily !== rightFamily) {
-    return false;
-  }
-  if (leftFamily === 'zh') {
-    return normalizeTranslationLanguage(left) === normalizeTranslationLanguage(right);
-  }
-  return true;
-}
-
 async function toggleLyricsTranslation(panel, automatic = false) {
   const button = panel.querySelector('.ytm-desktop-lyrics-translate');
-  if (button.disabled) {
+  if (button.disabled || panel.dataset.translationUnavailable === 'true') {
     return false;
   }
   if (panel.dataset.translated === 'true') {
@@ -2741,6 +2934,7 @@ async function maybeAutoTranslateLyrics(panel) {
     !appearanceSettings.autoTranslateLyrics
     || !panel
     || panel.hidden
+    || panel.dataset.translationUnavailable === 'true'
     || !panel.querySelector('.ytm-desktop-lyrics-line')
   ) {
     return;
@@ -2753,6 +2947,51 @@ async function maybeAutoTranslateLyrics(panel) {
   const completed = await toggleLyricsTranslation(panel, true);
   if (!completed && panel.dataset.timelineKey === timelineKey) {
     delete panel.dataset.autoTranslationChecked;
+  }
+}
+
+async function refreshLyricsTranslationAvailability(panel) {
+  if (!panel || !currentLyricsResult?.lines?.length) {
+    return;
+  }
+  const timelineKey = panel.dataset.timelineKey || '';
+  const requestToken = ++lyricsLanguageDetectionRequestToken;
+  const targetLanguage = normalizeTranslationLanguage(document.documentElement.lang);
+  const declaredLanguage = currentLyricsResult.source === 'youtube-cc'
+    ? currentLyricsResult.sourceLanguage
+    : '';
+  if (declaredLanguage && haveSameLanguage(declaredLanguage, targetLanguage)) {
+    setLyricsTranslationUnavailable(panel, true);
+    return;
+  }
+
+  const lines = currentLyricsResult.lines
+    .filter((line) => !isLyricsMetadataLine(line.text))
+    .map((line) => line.text)
+    .filter(Boolean);
+  try {
+    const detection = await ipcRenderer.invoke('lyrics:detect-language', { lines });
+    if (requestToken !== lyricsLanguageDetectionRequestToken
+      || panel.dataset.timelineKey !== timelineKey) {
+      return;
+    }
+    const detectedLanguage = String(detection?.language || '');
+    const unavailable = !shouldOfferLyricsTranslation({
+      declaredLanguage,
+      detectedLanguage,
+      source: currentLyricsResult.source,
+      targetLanguage
+    });
+    setLyricsTranslationUnavailable(panel, unavailable);
+    if (!unavailable && appearanceSettings.autoTranslateLyrics) {
+      maybeAutoTranslateLyrics(panel);
+    }
+  } catch (error) {
+    console.warn('Unable to detect lyrics language:', error.message);
+    if (requestToken === lyricsLanguageDetectionRequestToken
+      && panel.dataset.timelineKey === timelineKey) {
+      setLyricsTranslationUnavailable(panel, true);
+    }
   }
 }
 
@@ -2782,6 +3021,8 @@ function setLyricsStatus(panel, message, loading = false) {
   lines.hidden = true;
   source.hidden = true;
   currentLyricsIndex = -1;
+  lyricsLanguageDetectionRequestToken += 1;
+  delete panel.dataset.translationUnavailable;
   resetLyricsTranslation(panel, true);
 }
 
@@ -2842,14 +3083,6 @@ function renderTimedLyrics(panel, lines, sourceText) {
 
   const fragment = document.createDocumentFragment();
   for (const line of lines) {
-    if (!line.text) {
-      const spacer = document.createElement('div');
-      spacer.className = 'ytm-desktop-lyrics-spacer';
-      spacer.dataset.time = String(line.time);
-      fragment.appendChild(spacer);
-      continue;
-    }
-
     const button = document.createElement('button');
     const original = document.createElement('span');
     const translation = document.createElement('span');
@@ -2894,7 +3127,8 @@ function renderTimedLyrics(panel, lines, sourceText) {
   source.textContent = sourceText;
   source.dataset.originalText = sourceText;
   source.hidden = false;
-  resetLyricsTranslation(panel);
+  resetLyricsTranslation(panel, true);
+  setLyricsTranslationUnavailable(panel, true);
   currentLyricsIndex = -1;
   currentLyricsResult = {
     ...(currentLyricsResult || {}),
@@ -2904,14 +3138,14 @@ function renderTimedLyrics(panel, lines, sourceText) {
   startLyricsSync();
   updateSyncedLyrics();
   publishDesktopLyricsState(panel);
-  maybeAutoTranslateLyrics(panel);
+  refreshLyricsTranslationAvailability(panel);
 }
 
 function updateSyncedLyrics() {
   const panel = getCurrentLyricsPanel();
   const playback = getLyricsPlaybackState();
   const lineElements = panel
-    ? [...panel.querySelectorAll('.ytm-desktop-lyrics-line, .ytm-desktop-lyrics-spacer')]
+    ? [...panel.querySelectorAll('.ytm-desktop-lyrics-line')]
     : [];
   if (!panel || panel.hidden || !playback || !lineElements.length) {
     return;
@@ -3013,6 +3247,13 @@ async function loadLyricsForCurrentTrack() {
     )
     && !lyricsRetryAttempted
     && Date.now() >= lyricsRetryAt;
+  const metadataRefresh = Boolean(key !== currentLyricsKey
+    && currentLyricsState === 'ready'
+    && currentLyricsResult
+    && currentLyricsTrack?.videoId === track?.videoId);
+  const preservedResult = (retrying || metadataRefresh) && currentLyricsState === 'ready'
+    ? currentLyricsResult
+    : null;
   if (key === currentLyricsKey && currentLyricsState === 'loading') {
     return;
   }
@@ -3038,17 +3279,30 @@ async function loadLyricsForCurrentTrack() {
     lyricsProviderRetryPending = false;
   }
   currentLyricsKey = key;
-  currentLyricsState = 'loading';
-  currentLyricsResult = null;
+  currentLyricsState = preservedResult ? 'ready' : 'loading';
+  currentLyricsResult = preservedResult;
   currentLyricsTrack = track;
-  currentLyricsIndex = -1;
-  ipcRenderer.send('desktop-lyrics:clear');
+  if (preservedResult && panel && panel.dataset.timelineKey !== key) {
+    if (panel.querySelector('.ytm-desktop-lyrics-line')) {
+      panel.dataset.timelineKey = key;
+      panel.dataset.lyricsVideoId = String(track?.videoId || '');
+      delete panel.dataset.autoTranslationChecked;
+      publishDesktopLyricsState(panel);
+      refreshLyricsTranslationAvailability(panel);
+    } else {
+      renderLyricsResult(panel, preservedResult, key);
+    }
+  }
+  if (!preservedResult) {
+    currentLyricsIndex = -1;
+    ipcRenderer.send('desktop-lyrics:clear');
+  }
   const requestToken = ++lyricsRequestToken;
   const forceRefresh = forceLyricsRefreshKey === trackFingerprint || retrying;
   if (forceRefresh) {
     forceLyricsRefreshKey = '';
   }
-  if (panel) {
+  if (panel && !preservedResult) {
     panel.dataset.timelineKey = key;
     setLyricsStatus(panel, getAppearanceStrings().lyricsLoading, true);
   }
@@ -3067,6 +3321,14 @@ async function loadLyricsForCurrentTrack() {
       return;
     }
     if (!result?.lines?.length) {
+      if (preservedResult) {
+        currentLyricsState = 'ready';
+        currentLyricsResult = preservedResult;
+        currentLyricsTrack = track;
+        lyricsProviderRetryPending = false;
+        lyricsRetryAt = 0;
+        return;
+      }
       currentLyricsState = 'empty';
       currentLyricsResult = null;
       currentLyricsTrack = track;
@@ -3096,6 +3358,14 @@ async function loadLyricsForCurrentTrack() {
   } catch (error) {
     console.warn('Unable to load lyrics:', error.message);
     if (requestToken === lyricsRequestToken) {
+      if (preservedResult) {
+        currentLyricsState = 'ready';
+        currentLyricsResult = preservedResult;
+        currentLyricsTrack = track;
+        lyricsProviderRetryPending = false;
+        lyricsRetryAt = 0;
+        return;
+      }
       currentLyricsState = 'error';
       currentLyricsResult = null;
       lyricsProviderRetryPending = false;
@@ -3142,12 +3412,16 @@ function requestLyricsRefresh() {
 
 function deactivateCustomLyrics(playerPage, selectedTab = null) {
   const panel = playerPage.querySelector(`#${LYRICS_PANEL_ID}`);
-  const nativeRenderer = playerPage.querySelector('#side-panel > ytmusic-tab-renderer');
+  const nativeRenderers = playerPage.querySelectorAll(
+    '#side-panel > ytmusic-tab-renderer, #side-panel ytmusic-tab-renderer'
+  );
   if (panel) {
     panel.hidden = true;
     panel.dataset.active = 'false';
   }
-  nativeRenderer?.classList.remove('ytm-desktop-native-tab-hidden');
+  for (const nativeRenderer of nativeRenderers) {
+    nativeRenderer.classList.remove('ytm-desktop-native-tab-hidden');
+  }
   if (selectedTab) {
     for (const tab of playerPage.querySelectorAll('#side-panel tp-yt-paper-tab')) {
       const selected = tab === selectedTab;
@@ -3162,8 +3436,10 @@ function deactivateCustomLyrics(playerPage, selectedTab = null) {
 function applyCustomLyricsView(playerPage, lyricsTab) {
   const tabs = [...playerPage.querySelectorAll('#side-panel tp-yt-paper-tab')];
   const panel = playerPage.querySelector(`#${LYRICS_PANEL_ID}`);
-  const nativeRenderer = playerPage.querySelector('#side-panel > ytmusic-tab-renderer');
-  if (!panel || !nativeRenderer) {
+  const nativeRenderer = playerPage.querySelector(
+    '#side-panel > ytmusic-tab-renderer, #side-panel ytmusic-tab-renderer'
+  );
+  if (!panel) {
     return;
   }
 
@@ -3174,7 +3450,7 @@ function applyCustomLyricsView(playerPage, lyricsTab) {
     tab.tabIndex = selected ? 0 : -1;
   }
   updateLyricsSelectionBar(playerPage, lyricsTab);
-  nativeRenderer.classList.add('ytm-desktop-native-tab-hidden');
+  nativeRenderer?.classList.add('ytm-desktop-native-tab-hidden');
   panel.hidden = false;
   panel.dataset.active = 'true';
   maybeAutoTranslateLyrics(panel);
@@ -3212,6 +3488,10 @@ function installLyricsIntegration() {
         if (!appearanceSettings.lrclibLyrics) {
           return;
         }
+        const panel = playerPage.querySelector(`#${LYRICS_PANEL_ID}`);
+        if (!panel) {
+          return;
+        }
         event.preventDefault();
         event.stopImmediatePropagation();
         activateCustomLyrics(playerPage, lyricsTab);
@@ -3228,12 +3508,15 @@ function installLyricsIntegration() {
       }
     }
 
+    const selectedTab = playerPage.querySelector('#side-panel tp-yt-paper-tab.iron-selected')
+      || playerPage.querySelector('#side-panel tp-yt-paper-tab[aria-selected="true"]')
+      || playerPage.querySelector('#side-panel tp-yt-paper-tab');
     if (appearanceSettings.lrclibLyrics) {
       lyricsTab.removeAttribute('disabled');
       lyricsTab.setAttribute('aria-disabled', 'false');
       lyricsTab.style.pointerEvents = '';
       const panel = playerPage.querySelector(`#${LYRICS_PANEL_ID}`);
-      if (panel?.dataset.active === 'true') {
+      if (panel?.dataset.active === 'true' || selectedTab === lyricsTab) {
         applyCustomLyricsView(playerPage, lyricsTab);
       }
     } else {
@@ -3247,9 +3530,6 @@ function installLyricsIntegration() {
         firstTab?.click();
       }
     }
-    const selectedTab = playerPage.querySelector('#side-panel tp-yt-paper-tab.iron-selected')
-      || playerPage.querySelector('#side-panel tp-yt-paper-tab[aria-selected="true"]')
-      || playerPage.querySelector('#side-panel tp-yt-paper-tab');
     updateLyricsSelectionBar(playerPage, selectedTab);
   }
 }
@@ -3440,6 +3720,7 @@ function watchPage() {
     .then(applyAppearanceSettings)
     .catch((error) => console.warn('Unable to read appearance settings:', error.message));
   document.addEventListener('pointerdown', rememberSettingsTouchSelection, true);
+  document.addEventListener('pointerdown', rememberSurfaceTriggerPoint, true);
   document.addEventListener('pointerup', activateTouchedSettingsSelection, true);
   document.addEventListener('pointerdown', (event) => {
     const picker = document.getElementById(SETTING_PICKER_ID);
@@ -3464,6 +3745,7 @@ function watchPage() {
   window.addEventListener('blur', closeMaterialContextMenu);
   window.addEventListener('resize', closeMaterialContextMenu);
   window.addEventListener('resize', () => closeSettingPicker());
+  window.addEventListener('resize', requestSurfaceAnimationRefresh, { passive: true });
   window.addEventListener('resize', refreshSettingsSelectionIndicators, { passive: true });
 
   const observer = new MutationObserver(() => {

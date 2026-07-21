@@ -85,6 +85,30 @@ test('lyrics identity changes when stable metadata changes for one video', () =>
   assert.notEqual(early, stable);
 });
 
+test('lyrics identity changes when startup metadata gains provider aliases', () => {
+  const early = createTrackFingerprint({
+    artist: 'Localized Artist', duration: 200, title: 'Song', videoId: 'abc'
+  });
+  const stable = createTrackFingerprint({
+    artist: 'Localized Artist',
+    artistAliases: ['Canonical Artist'],
+    duration: 200,
+    title: 'Song',
+    titleAliases: ['Canonical Song'],
+    videoId: 'abc'
+  });
+  assert.notEqual(early, stable);
+  assert.notEqual(stable, createTrackFingerprint({
+    album: 'Stable Album',
+    artist: 'Localized Artist',
+    artistAliases: ['Canonical Artist'],
+    duration: 200,
+    title: 'Song',
+    titleAliases: ['Canonical Song'],
+    videoId: 'abc'
+  }));
+});
+
 test('selects a square cover and rejects a widescreen thumbnail', () => {
   const artwork = selectSquareArtwork([
     { src: 'https://i.ytimg.com/video=w1280-h720', width: 1280, height: 720 },

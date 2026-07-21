@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { createLyricsService } = require('../src/lyrics-service');
+const { createLyricsService, extractNeteaseLyrics } = require('../src/lyrics-service');
 
 const track = {
   artist: 'Example Artist',
@@ -88,9 +88,21 @@ test('falls back to LRCLIB when NetEase has no matching song', async () => {
   const result = await service.resolve(track, { syncEnabled: true, neteaseEnabled: true });
   assert.equal(result.source, 'lrclib');
   assert.deepEqual(result.providerAttempts, ['netease', 'lrclib']);
-  assert.equal(result.retryRecommended, true);
+  assert.equal(result.retryRecommended, false);
   assert.equal(hosts[0], 'music.163.com');
   assert.equal(hosts.at(-1), 'lrclib.net');
+  const callsAfterFallback = hosts.length;
+  assert.equal((await service.resolve(
+    track,
+    { syncEnabled: true, neteaseEnabled: true }
+  )).source, 'lrclib');
+  assert.equal(hosts.length, callsAfterFallback);
+});
+
+test('preserves literal parenthetical text while converting NetEase YRC timing', () => {
+  assert.equal(extractNeteaseLyrics({
+    yrc: { lyric: '[1000,500](1000,500,0)(Oh)' }
+  }), '[00:01.000](Oh)');
 });
 
 test('falls back to LRCLIB when the NetEase request fails', async () => {
@@ -104,6 +116,17 @@ test('falls back to LRCLIB when the NetEase request fails', async () => {
   });
   const result = await service.resolve(track, { syncEnabled: true, neteaseEnabled: true });
   assert.equal(result.source, 'lrclib');
+});
+
+test('treats a NetEase service error payload as a retryable provider failure', async () => {
+  const service = createLyricsService({
+    requestJson: async (url) => new URL(url).hostname === 'music.163.com'
+      ? { code: -460, message: 'risk control' }
+      : lrclibMatch
+  });
+  const result = await service.resolve(track, { syncEnabled: true, neteaseEnabled: true });
+  assert.equal(result.source, 'lrclib');
+  assert.equal(result.retryRecommended, true);
 });
 
 test('deduplicates concurrent lookups and caches an empty result', async () => {
@@ -314,18 +337,22 @@ test('uses YouTube CC before configured providers for a music video', async () =
     language: 'en-US'
   }, { syncEnabled: true, neteaseEnabled: false });
   assert.equal(result.source, 'youtube-cc');
+  assert.equal(result.sourceLanguage, 'en');
   assert.deepEqual(result.providerAttempts, ['youtube-cc']);
   assert.match(result.syncedLyrics, /\[00:01\.250\]Caption line/);
   assert.equal(calls.length, 1);
   assert.equal(new URL(calls.at(-1)).searchParams.get('fmt'), 'json3');
 });
 
-test('ignores stale and unrelated-language automatic caption tracks', async () => {
+test('ignores stale captions but uses a current automatic caption in another language', async () => {
   const calls = [];
   const service = createLyricsService({
     requestJson: async (url) => {
-      calls.push(new URL(url));
-      return [];
+      const parsed = new URL(url);
+      calls.push(parsed);
+      return parsed.hostname.endsWith('youtube.com')
+        ? { events: [{ tStartMs: 1000, segs: [{ utf8: 'Lời bài hát' }] }] }
+        : [];
     }
   });
   const result = await service.resolve({
@@ -347,10 +374,11 @@ test('ignores stale and unrelated-language automatic caption tracks', async () =
     isMusicVideo: true,
     language: 'zh-CN'
   }, { syncEnabled: true, neteaseEnabled: false });
-  assert.equal(result.source, '');
-  assert.deepEqual(result.providerAttempts, ['youtube-cc', 'lrclib']);
-  assert.equal(calls.some((url) => url.hostname.endsWith('youtube.com')), false);
-  assert.equal(calls.every((url) => url.hostname === 'lrclib.net'), true);
+  assert.equal(result.source, 'youtube-cc');
+  assert.equal(result.sourceLanguage, 'vi');
+  assert.deepEqual(result.providerAttempts, ['youtube-cc']);
+  assert.equal(calls.filter((url) => url.hostname.endsWith('youtube.com')).length, 1);
+  assert.equal(calls.some((url) => url.searchParams.get('v') === 'previous-video'), false);
 });
 
 test('falls back from music-video CC to NetEase and then LRCLIB', async () => {
