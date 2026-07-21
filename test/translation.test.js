@@ -39,6 +39,10 @@ test('keeps one Google request for a normal song and splits only above the limit
 test('preserves Google lyric line boundaries with the request separator', () => {
   const lines = ['first line', 'second line', 'third line'];
   assert.deepEqual(splitGoogleLyricsText(joinGoogleLyricsLines(lines), lines.length), lines);
+  assert.deepEqual(splitGoogleLyricsText(
+    '第一行\n [[[ ytm9f3a7c1d ]]] \n第二行',
+    2
+  ), ['第一行', '第二行']);
   assert.throws(() => splitGoogleLyricsText('merged translation', 2));
 });
 

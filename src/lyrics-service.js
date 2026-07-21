@@ -155,7 +155,6 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
         }
       }
       const ranked = rankLyricsCandidates([...candidates.values()], hints, 70, {
-        allowTitleDurationMatch: true,
         durationToleranceSeconds: 35,
         requireSyncedLyrics: false
       });
@@ -165,7 +164,6 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
     }
 
     let ranked = rankLyricsCandidates([...candidates.values()], hints, 70, {
-      allowTitleDurationMatch: true,
       durationToleranceSeconds: 35,
       requireSyncedLyrics: false
     });
@@ -188,7 +186,6 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
           }
         }
         ranked = rankLyricsCandidates([...candidates.values()], hints, 70, {
-          allowTitleDurationMatch: true,
           durationToleranceSeconds: 35,
           requireSyncedLyrics: false
         });
@@ -236,12 +233,33 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
     const selected = (Array.isArray(track?.captionTracks) ? track.captionTracks : [])
       .filter((caption) => caption?.baseUrl)
       .map((caption) => {
+        let url;
+        try {
+          url = new URL(caption.baseUrl);
+        } catch {
+          return null;
+        }
+        const isCurrentYouTubeCaption = url.protocol === 'https:'
+          && (url.hostname === 'youtube.com' || url.hostname.endsWith('.youtube.com'))
+          && url.pathname === '/api/timedtext'
+          && !url.searchParams.has('tlang')
+          && (!track?.videoId || url.searchParams.get('v') === String(track.videoId));
+        if (!isCurrentYouTubeCaption) {
+          return null;
+        }
         const code = String(caption.languageCode || '').toLowerCase();
+        const exactLanguage = code === language;
+        const sameLanguageFamily = baseLanguage && code.split('-')[0] === baseLanguage;
+        if (caption.kind === 'asr' && !exactLanguage && !sameLanguageFamily) {
+          return null;
+        }
         let score = caption.kind === 'asr' ? 0 : 100;
-        if (code === language) score += 40;
-        else if (baseLanguage && code.split('-')[0] === baseLanguage) score += 25;
+        if (exactLanguage) score += 240;
+        else if (sameLanguageFamily) score += 180;
+        if (caption.isDefault === true) score += 40;
         return { caption, score };
       })
+      .filter(Boolean)
       .sort((left, right) => right.score - left.score)[0]?.caption;
     if (!selected) {
       return null;
@@ -288,7 +306,8 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
       captions: (track?.captionTracks || []).slice(0, 10).map((caption) => [
         caption?.vssId,
         caption?.languageCode,
-        caption?.kind
+        caption?.kind,
+        caption?.isDefault === true
       ]),
       musicVideo: track?.isMusicVideo === true,
       netease: options.neteaseEnabled === true,
@@ -320,6 +339,7 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
         ];
       const providerAttempts = [];
       let successfulProviders = 0;
+      let providerFailures = 0;
       let lastError = null;
       for (const provider of providers) {
         providerAttempts.push(provider.name);
@@ -327,19 +347,35 @@ function createLyricsService({ requestJson, getUserAgent = () => '' } = {}) {
           const result = await provider.lookup(track, hints);
           successfulProviders += 1;
           if (result) {
-            const resolved = { ...result, providerAttempts };
-            boundedSet(cache, cacheKey, resolved);
+            const retryRecommended = providerFailures > 0
+              || (result.source === 'lrclib' && providerAttempts.includes('netease'));
+            const resolved = {
+              ...result,
+              providerAttempts,
+              retryRecommended
+            };
+            if (!resolved.retryRecommended) {
+              boundedSet(cache, cacheKey, resolved);
+            }
             return resolved;
           }
         } catch (error) {
+          providerFailures += 1;
           lastError = error;
         }
       }
       if (!successfulProviders && lastError) {
         throw lastError;
       }
-      const empty = { providerAttempts, source: '', syncedLyrics: '' };
-      boundedSet(cache, cacheKey, empty);
+      const empty = {
+        providerAttempts,
+        retryRecommended: providerFailures > 0,
+        source: '',
+        syncedLyrics: ''
+      };
+      if (!empty.retryRecommended) {
+        boundedSet(cache, cacheKey, empty);
+      }
       return empty;
     })().finally(() => inFlight.delete(cacheKey));
 

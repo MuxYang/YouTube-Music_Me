@@ -135,6 +135,26 @@ test('uses the full music-video title as a provider search hint', () => {
   )), true);
 });
 
+test('treats localized featured-artist labels as artist metadata', () => {
+  const hints = buildLyricsSearchHints({
+    artist: 'Fenruri',
+    duration: 212,
+    title: 'Lost in the Noise',
+    titleAliases: ['Lost in the Noise（合作音乐人：KASANE TETO）']
+  });
+  assert.equal(hints.titles.includes('Lost in the Noise'), true);
+  assert.equal(hints.titles.some((title) => title.includes('合作音乐人')), false);
+  assert.equal(hints.artists.includes('KASANE TETO'), true);
+  assert.equal(hints.isJapanese, false);
+  assert.equal(isLikelyRomanizedLyrics(
+    '[00:01.00]Static in my ears now the world fades away',
+    {
+      title: 'Lost in the Noise',
+      titleAliases: ['Lost in the Noise（合作音乐人：KASANE TETO）']
+    }
+  ), false);
+});
+
 test('searches canonical artist aliases before presentation title variants', () => {
   const hints = buildLyricsSearchHints({
     artist: '怪忌蝶',
@@ -198,6 +218,22 @@ test('rejects a candidate with a materially different duration', () => {
     artistName: 'Artist',
     duration: 180,
     syncedLyrics: '[00:01.00]wrong version'
+  }], hints), null);
+});
+
+test('rejects an exact title and duration when the artist does not match', () => {
+  const hints = buildLyricsSearchHints({
+    artist: 'Fenruri',
+    duration: 212,
+    title: 'Lost in the Noise',
+    titleAliases: ['Lost in the Noise（合作音乐人：KASANE TETO）']
+  });
+  assert.equal(selectBestLyricsCandidate([{
+    id: 1,
+    trackName: 'Lost in the Noise',
+    artistName: '逍遥游之',
+    duration: 212,
+    syncedLyrics: '[00:01.00]wrong lyrics'
   }], hints), null);
 });
 

@@ -1,5 +1,7 @@
 'use strict';
 
+const FEATURED_ARTIST_PATTERN = /\s*[（(]\s*(?:(?:feat(?:uring)?|ft)\.?\s*[:：]?\s+|(?:合作音乐人|合作音樂人|客串艺人|客串藝人|フィーチャリング)\s*[:：]\s*)([^()（）]{1,120})[）)]/giu;
+
 function uniqueText(values, limit = 12) {
   const result = [];
   const seen = new Set();
@@ -20,10 +22,21 @@ function uniqueText(values, limit = 12) {
 
 function stripPresentationNoise(value) {
   return String(value || '')
+    .replace(FEATURED_ARTIST_PATTERN, ' ')
     .replace(/\s*[\[(【][^\])】]*(?:official|video|audio|lyric|visualizer|mv|pv|4k|hd)[^\])】]*[\])】]/giu, ' ')
     .replace(/\s*[-–—]\s*(?:official\s+)?(?:music\s+)?(?:video|audio|lyrics?|visualizer).*$/iu, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function extractFeaturedArtists(value) {
+  const artists = [];
+  for (const match of String(value || '').matchAll(FEATURED_ARTIST_PATTERN)) {
+    artists.push(...String(match[1] || '').split(
+      /\s*(?:,|，|、|&|＆|\band\b)\s*/iu
+    ));
+  }
+  return uniqueText(artists, 8);
 }
 
 function splitDisplayTitle(value) {
@@ -49,7 +62,9 @@ function containsJapanese(value) {
 
 function isLikelyRomanizedLyrics(value, track = {}) {
   track ||= {};
-  const titles = [track.title, ...(track.titleAliases || [])].join(' ');
+  const titles = [track.title, ...(track.titleAliases || [])]
+    .map(stripPresentationNoise)
+    .join(' ');
   if (!containsJapanese(titles)) {
     return false;
   }
@@ -107,6 +122,7 @@ function buildLyricsSearchHints(track = {}) {
   const inferredPairs = [];
 
   for (const rawTitle of rawTitles) {
+    artists.push(...extractFeaturedArtists(rawTitle));
     const cleaned = stripPresentationNoise(rawTitle);
     const parts = splitDisplayTitle(rawTitle);
     titles.push(cleaned);
@@ -162,7 +178,7 @@ function buildLyricsSearchHints(track = {}) {
     albums: uniqueText([track.album, ...(track.albumAliases || [])], 6),
     artists: normalizedArtists,
     duration: Number(track.duration) || 0,
-    isJapanese: containsJapanese(rawTitles.join(' ')),
+    isJapanese: containsJapanese(normalizedTitles.join(' ')),
     pairs,
     titles: normalizedTitles,
     videoId: String(track.videoId || '')
@@ -246,11 +262,7 @@ function scoreLyricsCandidate(candidate, hints, options = {}) {
   if (durationDifference !== null && durationDifference > durationTolerance) {
     return Number.NEGATIVE_INFINITY;
   }
-  if (artistScore < 0.32
-    && !(titleScore >= 0.98 && durationDifference !== null && (
-      durationDifference <= 2
-      || (options.allowTitleDurationMatch === true && durationDifference <= 10)
-    ))) {
+  if (artistScore < 0.32) {
     return Number.NEGATIVE_INFINITY;
   }
 

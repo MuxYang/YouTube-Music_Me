@@ -2,7 +2,8 @@
 
 const GOOGLE_TRANSLATE_CHARACTER_LIMIT = 4500;
 const DEEPL_REQUEST_BYTE_LIMIT = 120 * 1024;
-const GOOGLE_LINE_SEPARATOR = '\n\uE000\uE001\uE002\n';
+const GOOGLE_LINE_SEPARATOR_TOKEN = '[[[YTM9F3A7C1D]]]';
+const GOOGLE_LINE_SEPARATOR = `\n${GOOGLE_LINE_SEPARATOR_TOKEN}\n`;
 
 function normalizeTranslationProvider(value) {
   return String(value || '').toLowerCase() === 'deepl' ? 'deepl' : 'google';
@@ -74,7 +75,8 @@ function joinGoogleLyricsLines(lines) {
 }
 
 function splitGoogleLyricsText(text, expectedLines) {
-  const lines = String(text || '').replace(/\r/g, '').split('\uE000\uE001\uE002')
+  const lines = String(text || '').replace(/\r/g, '')
+    .split(/\s*\[\[\[\s*YTM9F3A7C1D\s*\]\]\]\s*/giu)
     .map((line) => line.trim());
   if (lines.length !== expectedLines) {
     throw new Error('Google Translate did not preserve the lyrics timeline.');

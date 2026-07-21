@@ -88,6 +88,7 @@ test('falls back to LRCLIB when NetEase has no matching song', async () => {
   const result = await service.resolve(track, { syncEnabled: true, neteaseEnabled: true });
   assert.equal(result.source, 'lrclib');
   assert.deepEqual(result.providerAttempts, ['netease', 'lrclib']);
+  assert.equal(result.retryRecommended, true);
   assert.equal(hosts[0], 'music.163.com');
   assert.equal(hosts.at(-1), 'lrclib.net');
 });
@@ -145,7 +146,7 @@ test('force refresh performs the preferred-provider request again', async () => 
   assert.equal(requests > cachedRequestCount, true);
 });
 
-test('accepts a NetEase title-duration match when YouTube localizes the artist', async () => {
+test('accepts a NetEase canonical artist alias when YouTube localizes the artist', async () => {
   const service = createLyricsService({
     requestJson: async (url) => {
       const parsed = new URL(url);
@@ -167,12 +168,77 @@ test('accepts a NetEase title-duration match when YouTube localizes the artist',
   });
   const result = await service.resolve({
     artist: '理查德·艾斯利',
+    artistAliases: ['Rick Astley'],
     duration: 213,
     title: 'Never Gonna Give You Up',
     videoId: 'video-localized'
   }, { syncEnabled: true, neteaseEnabled: true });
   assert.equal(result.source, 'netease');
   assert.deepEqual(result.providerAttempts, ['netease']);
+});
+
+test('does not fetch lyrics for a same-title NetEase song by another artist', async () => {
+  const calls = [];
+  const service = createLyricsService({
+    requestJson: async (url) => {
+      const parsed = new URL(url);
+      calls.push(parsed);
+      if (parsed.pathname === '/api/cloudsearch/pc') {
+        return {
+          result: {
+            songs: [{
+              al: { name: 'Unrelated album' },
+              ar: [{ name: '逍遥游之' }],
+              dt: 212000,
+              id: 31,
+              name: 'Lost in the Noise'
+            }]
+          }
+        };
+      }
+      if (parsed.hostname === 'lrclib.net') {
+        return [];
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    }
+  });
+  const result = await service.resolve({
+    artist: 'Fenruri',
+    duration: 212,
+    title: 'Lost in the Noise',
+    titleAliases: ['Lost in the Noise（合作音乐人：KASANE TETO）'],
+    videoId: 'lost-in-the-noise'
+  }, { syncEnabled: true, neteaseEnabled: true });
+  assert.equal(result.source, '');
+  assert.equal(calls.some((url) => url.pathname === '/api/song/lyric'), false);
+  assert.equal(calls.some((url) => url.hostname === 'lrclib.net'), true);
+});
+
+test('does not cache an LRCLIB fallback caused by a NetEase request failure', async () => {
+  let neteaseSearches = 0;
+  const service = createLyricsService({
+    requestJson: async (url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === '/api/cloudsearch/pc') {
+        neteaseSearches += 1;
+        if (neteaseSearches === 1) {
+          throw new Error('Transient NetEase failure');
+        }
+        return neteaseSearchMatch;
+      }
+      if (parsed.pathname === '/api/song/lyric') {
+        return { lrc: { lyric: '[00:01.00]NetEase recovered' } };
+      }
+      return lrclibMatch;
+    }
+  });
+  const options = { syncEnabled: true, neteaseEnabled: true };
+  const first = await service.resolve(track, options);
+  const second = await service.resolve(track, options);
+  assert.equal(first.source, 'lrclib');
+  assert.equal(first.retryRecommended, true);
+  assert.equal(second.source, 'netease');
+  assert.equal(neteaseSearches, 2);
 });
 
 test('retries NetEase with the title alone when artist-qualified searches miss', async () => {
@@ -252,6 +318,39 @@ test('uses YouTube CC before configured providers for a music video', async () =
   assert.match(result.syncedLyrics, /\[00:01\.250\]Caption line/);
   assert.equal(calls.length, 1);
   assert.equal(new URL(calls.at(-1)).searchParams.get('fmt'), 'json3');
+});
+
+test('ignores stale and unrelated-language automatic caption tracks', async () => {
+  const calls = [];
+  const service = createLyricsService({
+    requestJson: async (url) => {
+      calls.push(new URL(url));
+      return [];
+    }
+  });
+  const result = await service.resolve({
+    ...track,
+    captionTracks: [
+      {
+        baseUrl: 'https://www.youtube.com/api/timedtext?v=previous-video&lang=en',
+        kind: '',
+        languageCode: 'en',
+        vssId: '.en'
+      },
+      {
+        baseUrl: 'https://www.youtube.com/api/timedtext?v=video-1&lang=vi',
+        kind: 'asr',
+        languageCode: 'vi',
+        vssId: 'a.vi'
+      }
+    ],
+    isMusicVideo: true,
+    language: 'zh-CN'
+  }, { syncEnabled: true, neteaseEnabled: false });
+  assert.equal(result.source, '');
+  assert.deepEqual(result.providerAttempts, ['youtube-cc', 'lrclib']);
+  assert.equal(calls.some((url) => url.hostname.endsWith('youtube.com')), false);
+  assert.equal(calls.every((url) => url.hostname === 'lrclib.net'), true);
 });
 
 test('falls back from music-video CC to NetEase and then LRCLIB', async () => {

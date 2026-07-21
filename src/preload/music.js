@@ -60,6 +60,7 @@ let forceLyricsRefreshKey = '';
 let lyricsRetryAt = 0;
 let lyricsRetryAttempted = false;
 let lyricsRetryKey = '';
+let lyricsProviderRetryPending = false;
 let lyricsUserScrollUntil = 0;
 let lyricsTranslationRequestToken = 0;
 let pendingLyricsIntegrationRefresh = false;
@@ -316,13 +317,19 @@ function samplePagePlayback() {
     src: image.currentSrc || image.src,
     width: image.naturalWidth || image.width
   }));
+  const captionRenderer = response?.captions?.playerCaptionsTracklistRenderer;
+  const defaultCaptionIndexes = new Set(
+    (Array.isArray(captionRenderer?.audioTracks) ? captionRenderer.audioTracks : [])
+      .map((track) => number(track?.defaultCaptionTrackIndex))
+      .filter((index) => index !== null && index >= 0)
+  );
   return {
     details: {
       author: String(details.author || ''),
-      captionTracks: Array.isArray(
-        response?.captions?.playerCaptionsTracklistRenderer?.captionTracks
-      ) ? response.captions.playerCaptionsTracklistRenderer.captionTracks.slice(0, 50).map((track) => ({
+      captionTracks: Array.isArray(captionRenderer?.captionTracks)
+        ? captionRenderer.captionTracks.slice(0, 50).map((track, index) => ({
           baseUrl: String(track?.baseUrl || ''),
+          isDefault: defaultCaptionIndexes.has(index),
           kind: String(track?.kind || ''),
           languageCode: String(track?.languageCode || ''),
           vssId: String(track?.vssId || '')
@@ -2791,7 +2798,8 @@ function getLyricsTrackFingerprint(track = getLyricsTrack()) {
     captions: (track?.captionTracks || []).slice(0, 10).map((caption) => [
       caption?.vssId,
       caption?.languageCode,
-      caption?.kind
+      caption?.kind,
+      caption?.isDefault === true
     ]),
     identity,
     videoTitle: String(track?.videoTitle || '')
@@ -2959,6 +2967,7 @@ function handleDetectedTrackChange(snapshot) {
   lyricsRetryAt = 0;
   lyricsRetryAttempted = false;
   lyricsRetryKey = '';
+  lyricsProviderRetryPending = false;
   stopLyricsSync();
   forceLyricsRefreshKey = appearanceSettings.lrclibLyrics
     ? getLyricsTrackFingerprint(snapshot.track)
@@ -2998,13 +3007,17 @@ async function loadLyricsForCurrentTrack() {
     netease: appearanceSettings.neteaseLyrics
   });
   const retrying = key === currentLyricsKey
-    && ['empty', 'error'].includes(currentLyricsState)
+    && (
+      ['empty', 'error'].includes(currentLyricsState)
+      || (currentLyricsState === 'ready' && lyricsProviderRetryPending)
+    )
     && !lyricsRetryAttempted
     && Date.now() >= lyricsRetryAt;
   if (key === currentLyricsKey && currentLyricsState === 'loading') {
     return;
   }
-  if (key === currentLyricsKey && currentLyricsState === 'ready' && currentLyricsResult) {
+  if (key === currentLyricsKey && currentLyricsState === 'ready'
+    && currentLyricsResult && !retrying) {
     if (panel && !panel.hidden && panel.dataset.timelineKey !== key) {
       renderLyricsResult(panel, currentLyricsResult, key);
     }
@@ -3019,8 +3032,10 @@ async function loadLyricsForCurrentTrack() {
     lyricsRetryAt = 0;
     lyricsRetryAttempted = false;
     lyricsRetryKey = key;
+    lyricsProviderRetryPending = false;
   } else if (retrying) {
     lyricsRetryAttempted = true;
+    lyricsProviderRetryPending = false;
   }
   currentLyricsKey = key;
   currentLyricsState = 'loading';
@@ -3055,6 +3070,7 @@ async function loadLyricsForCurrentTrack() {
       currentLyricsState = 'empty';
       currentLyricsResult = null;
       currentLyricsTrack = track;
+      lyricsProviderRetryPending = false;
       ipcRenderer.send('desktop-lyrics:clear');
       if (panel) {
         setLyricsStatus(panel, getAppearanceStrings().lyricsNotFound);
@@ -3064,7 +3080,8 @@ async function loadLyricsForCurrentTrack() {
       }
       return;
     }
-    lyricsRetryAt = 0;
+    lyricsProviderRetryPending = value?.retryRecommended === true && !lyricsRetryAttempted;
+    lyricsRetryAt = lyricsProviderRetryPending ? Date.now() + 5000 : 0;
     currentLyricsState = 'ready';
     currentLyricsResult = result;
     currentLyricsTrack = track;
@@ -3073,11 +3090,15 @@ async function loadLyricsForCurrentTrack() {
     if (panel) {
       renderLyricsResult(panel, result, key);
     }
+    if (lyricsProviderRetryPending) {
+      window.setTimeout(requestLyricsRefresh, 5050);
+    }
   } catch (error) {
     console.warn('Unable to load lyrics:', error.message);
     if (requestToken === lyricsRequestToken) {
       currentLyricsState = 'error';
       currentLyricsResult = null;
+      lyricsProviderRetryPending = false;
       ipcRenderer.send('desktop-lyrics:clear');
       if (panel) {
         setLyricsStatus(panel, getAppearanceStrings().lyricsError);
@@ -3103,7 +3124,12 @@ function requestLyricsRefresh() {
     netease: appearanceSettings.neteaseLyrics
   });
   if (key === currentLyricsKey) {
-    if (['loading', 'ready'].includes(currentLyricsState)) {
+    const providerRetryReady = currentLyricsState === 'ready'
+      && lyricsProviderRetryPending
+      && !lyricsRetryAttempted
+      && Date.now() >= lyricsRetryAt;
+    if (currentLyricsState === 'loading'
+      || (currentLyricsState === 'ready' && !providerRetryReady)) {
       return;
     }
     if (['empty', 'error'].includes(currentLyricsState)
@@ -3238,6 +3264,7 @@ function refreshLyricsIntegration() {
     lyricsRetryAt = 0;
     lyricsRetryAttempted = false;
     lyricsRetryKey = '';
+    lyricsProviderRetryPending = false;
     lyricsRequestToken += 1;
     currentLyricsKey = '';
     currentLyricsState = 'idle';
