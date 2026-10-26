@@ -14,9 +14,9 @@ const {
 const {
   hasGoogleAccountCookies,
   isAuthenticationEntryUrl,
+  isAuthenticationReturnUrl,
   isGoogleAccountCookie,
-  isYouTubeSignInUrl,
-  isYouTubeUrl
+  isSignOutUrl
 } = require('./auth');
 const {
   normalizeTranslationLanguage
@@ -78,6 +78,9 @@ let splashTransitionStarted = false;
 let musicDocumentLoaded = false;
 let musicInterfaceReady = false;
 let musicLoadFailed = false;
+let musicLoadRequestId = 0;
+let musicRetryUrl = '';
+let splashState = { status: 'loading' };
 let settings = DEFAULT_SETTINGS;
 let electronUserAgent = '';
 let youtubeLanguagePreference = '';
@@ -775,9 +778,6 @@ function openAuthWindow(url) {
   if (authWindow && !authWindow.isDestroyed()) {
     authWindow.show();
     authWindow.focus();
-    if (authWindow.webContents.getURL() !== url) {
-      authWindow.loadURL(url);
-    }
     return;
   }
 
@@ -809,6 +809,10 @@ function openAuthWindow(url) {
   let authenticationCompleted = false;
   let authenticationCheckInFlight = false;
   let authenticationCheckTimer = null;
+  let authDocumentLoaded = false;
+  let authCookiesChanged = false;
+  let signingOut = isSignOutUrl(url);
+  let returnUrl = MUSIC_URL;
 
   currentAuthWindow.setMenuBarVisibility(false);
   authContents.setUserAgent(electronUserAgent);
@@ -820,28 +824,47 @@ function openAuthWindow(url) {
     }
 
     if (isTrustedAppUrl(popupUrl)) {
-      return { action: 'allow' };
+      currentAuthWindow.loadURL(popupUrl).catch((error) => {
+        console.warn('Unable to navigate the Google account window:', error.message);
+      });
+      return { action: 'deny' };
     }
 
     openInSystemBrowser(popupUrl);
     return { action: 'deny' };
   });
   const scheduleAuthenticationCheck = (nextUrl = authContents.getURL()) => {
-    if (!isYouTubeUrl(nextUrl) || isYouTubeSignInUrl(nextUrl)) {
+    if (!authDocumentLoaded || (!isAuthenticationReturnUrl(nextUrl)
+      && !(signingOut && isSignOutUrl(nextUrl)))) {
       return;
     }
     clearTimeout(authenticationCheckTimer);
     authenticationCheckTimer = setTimeout(async () => {
-      if (authenticationCheckInFlight || currentAuthWindow.isDestroyed()) {
+      if (authenticationCheckInFlight || currentAuthWindow.isDestroyed()
+        || !authDocumentLoaded || authContents.getURL() !== nextUrl) {
         return;
       }
       authenticationCheckInFlight = true;
       try {
-        const cookies = await authSession.cookies.get({});
-        if (!hasGoogleAccountCookies(cookies)) {
+        const cookies = await authSession.cookies.get({ url: MUSIC_URL });
+        if (currentAuthWindow.isDestroyed() || !authDocumentLoaded
+          || authContents.getURL() !== nextUrl
+          || hasGoogleAccountCookies(cookies) === signingOut) {
           return;
         }
         await authSession.cookies.flushStore();
+        if (currentAuthWindow.isDestroyed() || !authDocumentLoaded
+          || authContents.getURL() !== nextUrl) {
+          return;
+        }
+        const destination = new URL(nextUrl);
+        if (!signingOut && destination.hostname === 'music.youtube.com') {
+          returnUrl = destination.href;
+        } else if (!signingOut && destination.searchParams.has('authuser')) {
+          const musicUrl = new URL(MUSIC_URL);
+          musicUrl.searchParams.set('authuser', destination.searchParams.get('authuser'));
+          returnUrl = musicUrl.href;
+        }
         authenticationCompleted = true;
         if (!currentAuthWindow.isDestroyed()) {
           currentAuthWindow.close();
@@ -853,27 +876,46 @@ function openAuthWindow(url) {
       }
     }, 650);
   };
-  const handleAuthCookieChange = (_event, cookie, _cause, removed) => {
-    if (!removed && isGoogleAccountCookie(cookie)) {
+  const handleAuthCookieChange = (_event, cookie) => {
+    if (isGoogleAccountCookie(cookie)) {
+      authCookiesChanged = true;
       scheduleAuthenticationCheck();
     }
   };
 
+  authContents.on('did-start-navigation', (_event, nextUrl, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) {
+      authDocumentLoaded = false;
+      clearTimeout(authenticationCheckTimer);
+      signingOut ||= isSignOutUrl(nextUrl);
+    }
+  });
   authContents.on('will-navigate', (event, nextUrl) => {
+    signingOut ||= isSignOutUrl(nextUrl);
     if (!isTrustedAppUrl(nextUrl)) {
       event.preventDefault();
       openInSystemBrowser(nextUrl);
     }
   });
-  authContents.on('will-redirect', (event, nextUrl) => {
+  authContents.on('will-redirect', (event, nextUrl, _isInPlace, isMainFrame) => {
+    if (isMainFrame === false) {
+      return;
+    }
+    signingOut ||= isSignOutUrl(nextUrl);
     if (!isTrustedAppUrl(nextUrl)) {
       event.preventDefault();
       openInSystemBrowser(nextUrl);
     }
   });
-  authContents.on('did-navigate', (_event, nextUrl) => scheduleAuthenticationCheck(nextUrl));
-  authContents.on('did-navigate-in-page', (_event, nextUrl) => scheduleAuthenticationCheck(nextUrl));
-  authContents.on('did-finish-load', () => scheduleAuthenticationCheck());
+  authContents.on('did-navigate-in-page', (_event, nextUrl, isMainFrame) => {
+    if (isMainFrame) {
+      scheduleAuthenticationCheck(nextUrl);
+    }
+  });
+  authContents.on('did-finish-load', () => {
+    authDocumentLoaded = true;
+    scheduleAuthenticationCheck();
+  });
   authSession.cookies.on('changed', handleAuthCookieChange);
   currentAuthWindow.on('closed', () => {
     clearTimeout(authenticationCheckTimer);
@@ -885,11 +927,11 @@ function openAuthWindow(url) {
       && mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
       showMainWindow();
     }
-    if (!isQuitting && authenticationCompleted
+    if (!isQuitting && (authenticationCompleted || authCookiesChanged || !musicView?.getVisible())
       && musicView && !musicView.webContents.isDestroyed()) {
       setTimeout(() => {
         if (musicView && !musicView.webContents.isDestroyed()) {
-          musicView.webContents.reloadIgnoringCache();
+          loadMusic(returnUrl);
         }
       }, 250);
     }
@@ -983,8 +1025,40 @@ function clearStartupRevealTimers() {
   splashFallbackTimer = null;
 }
 
+function sendSplashState(state) {
+  splashState = state;
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('splash:state', state);
+  }
+}
+
+function showMusicLoadError(message) {
+  musicLoadFailed = true;
+  splashTransitionStarted = false;
+  clearStartupRevealTimers();
+  if (musicView && !musicView.webContents.isDestroyed()) {
+    musicView.setVisible(false);
+  }
+  sendSplashState({ status: 'error', message });
+}
+
+function beginMusicLoad() {
+  clearStartupRevealTimers();
+  splashTransitionStarted = false;
+  musicDocumentLoaded = false;
+  musicInterfaceReady = false;
+  musicLoadFailed = false;
+  musicView.setVisible(false);
+  sendSplashState({ status: 'loading' });
+  startupRevealTimer = setTimeout(() => {
+    showMusicLoadError('YouTube Music did not become ready in time.');
+  }, 20000);
+}
+
 function revealMusicView() {
-  if (!musicView || !mainWindow || musicView.webContents.isDestroyed()) {
+  if (!musicView || !mainWindow || mainWindow.isDestroyed()
+    || musicView.webContents.isDestroyed() || musicLoadFailed
+    || !musicDocumentLoaded || !musicInterfaceReady || !splashTransitionStarted) {
     return;
   }
 
@@ -999,6 +1073,8 @@ function requestSplashReveal(reason) {
   if (
     splashTransitionStarted
     || musicLoadFailed
+    || !musicDocumentLoaded
+    || !musicInterfaceReady
     || !mainWindow
     || mainWindow.isDestroyed()
     || !musicView
@@ -1010,7 +1086,7 @@ function requestSplashReveal(reason) {
   splashTransitionStarted = true;
   clearTimeout(startupRevealTimer);
   startupRevealTimer = null;
-  mainWindow.webContents.send('splash:state', { reason, status: 'ready' });
+  sendSplashState({ reason, status: 'ready' });
   splashFallbackTimer = setTimeout(() => revealMusicView(), 3200);
 }
 
@@ -1020,26 +1096,18 @@ function maybeRevealSplash() {
   }
 }
 
-function loadMusic() {
+function loadMusic(url = musicRetryUrl || getCachedMusicUrl()) {
   if (!musicView || musicView.webContents.isDestroyed()) {
     return;
   }
 
-  clearStartupRevealTimers();
-  splashTransitionStarted = false;
-  musicDocumentLoaded = false;
-  musicInterfaceReady = false;
-  musicLoadFailed = false;
-  mainWindow.webContents.send('splash:state', { status: 'loading' });
-  musicView.setVisible(false);
-  startupRevealTimer = setTimeout(() => requestSplashReveal('timeout'), 7000);
-  musicView.webContents.loadURL(getCachedMusicUrl()).catch((error) => {
-    musicLoadFailed = true;
-    clearStartupRevealTimers();
-    mainWindow?.webContents.send('splash:state', {
-      status: 'error',
-      message: error.message
-    });
+  const requestId = ++musicLoadRequestId;
+  musicRetryUrl = url;
+  beginMusicLoad();
+  musicView.webContents.loadURL(url).catch((error) => {
+    if (requestId === musicLoadRequestId && error.code !== 'ERR_ABORTED' && error.errno !== -3) {
+      showMusicLoadError(error.message);
+    }
   });
 }
 
@@ -1088,9 +1156,18 @@ function configureMusicView() {
     }
   });
 
-  contents.on('did-start-loading', () => {
-    if (!musicView?.getVisible()) {
-      mainWindow?.webContents.send('splash:state', { status: 'loading' });
+  contents.on('did-start-navigation', (_event, url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace && isAuthenticationReturnUrl(url)
+      && !isExternalPolicyUrl(url)) {
+      musicRetryUrl = url;
+      beginMusicLoad();
+    }
+  });
+
+  contents.on('did-navigate', (_event, _url, httpResponseCode) => {
+    musicInterfaceReady = false;
+    if (httpResponseCode >= 400) {
+      showMusicLoadError(`YouTube Music returned HTTP ${httpResponseCode}.`);
     }
   });
 
@@ -1101,18 +1178,16 @@ function configureMusicView() {
     }
   });
 
-  contents.on('did-fail-load', (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+  contents.on('did-fail-load', (_event, errorCode, errorDescription, _validatedUrl, isMainFrame) => {
     if (!isMainFrame || errorCode === -3) {
       return;
     }
 
-    musicLoadFailed = true;
-    clearStartupRevealTimers();
-    mainWindow?.webContents.send('splash:state', {
-      status: 'error',
-      message: `${errorDescription} (${errorCode})`,
-      url: validatedUrl
-    });
+    showMusicLoadError(`${errorDescription} (${errorCode})`);
+  });
+
+  contents.on('render-process-gone', () => {
+    showMusicLoadError('The YouTube Music renderer stopped.');
   });
 
   contents.setWindowOpenHandler(({ url }) => {
@@ -1158,7 +1233,7 @@ function configureMusicView() {
     childWindow.setMenuBarVisibility(false);
   });
 
-  contents.on('will-navigate', (event, url) => {
+  const handleNavigation = (event, url) => {
     if (isExternalPolicyUrl(url)) {
       event.preventDefault();
       openInSystemBrowser(url);
@@ -1174,6 +1249,12 @@ function configureMusicView() {
     if (!isTrustedAppUrl(url)) {
       event.preventDefault();
       openInSystemBrowser(url);
+    }
+  };
+  contents.on('will-navigate', handleNavigation);
+  contents.on('will-redirect', (event, url, _isInPlace, isMainFrame) => {
+    if (isMainFrame) {
+      handleNavigation(event, url);
     }
   });
 }
@@ -1442,12 +1523,23 @@ function installIpcHandlers() {
     }
   });
   ipcMain.on('pwa:ready', (event) => {
-    if (!musicView || event.sender !== musicView.webContents || musicView.getVisible()) {
+    if (!musicView || event.sender !== musicView.webContents || musicView.getVisible()
+      || musicLoadFailed) {
       return;
     }
 
     musicInterfaceReady = true;
     maybeRevealSplash();
+  });
+  ipcMain.on('pwa:load-failed', (event) => {
+    if (isMusicViewSender(event)) {
+      showMusicLoadError('YouTube Music is offline.');
+    }
+  });
+  ipcMain.on('splash:ready', (event) => {
+    if (isSplashSender(event)) {
+      sendSplashState(splashState);
+    }
   });
   ipcMain.on('splash:transition-complete', (event) => {
     if (isSplashSender(event)) {

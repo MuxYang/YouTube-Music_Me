@@ -11,6 +11,9 @@ const errorText = document.getElementById('error-text');
 const strings = window.startup.strings;
 let exitRequested = false;
 let transitionReported = false;
+let exitTimer = null;
+let transitionTimer = null;
+let currentStatus = 'loading';
 
 document.documentElement.lang = strings.languageTag;
 splash.setAttribute('aria-label', strings.splashLoading);
@@ -34,13 +37,14 @@ function beginExit() {
 
   const elapsed = performance.now() - startedAt;
   const delay = Math.max(0, MINIMUM_SEQUENCE_MS - elapsed);
-  window.setTimeout(() => {
+  exitTimer = window.setTimeout(() => {
     splash.classList.add('is-exiting');
-    window.setTimeout(reportTransitionComplete, EXIT_DURATION_MS);
+    transitionTimer = window.setTimeout(reportTransitionComplete, EXIT_DURATION_MS);
   }, delay);
 }
 
 retryButton.addEventListener('click', () => {
+  currentStatus = 'loading';
   errorPanel.classList.remove('visible');
   errorPanel.hidden = true;
   window.startup.retry();
@@ -54,14 +58,26 @@ splash.addEventListener('transitionend', (event) => {
 });
 
 window.startup.onState((state) => {
+  currentStatus = state.status;
   if (state.status === 'ready') {
     beginExit();
     return;
   }
 
+  window.clearTimeout(exitTimer);
+  window.clearTimeout(transitionTimer);
+  exitRequested = false;
+  transitionReported = false;
+  splash.classList.remove('is-exiting');
   const hasError = state.status === 'error';
   errorPanel.hidden = !hasError;
   errorPanel.classList.toggle('visible', hasError);
+});
+
+window.addEventListener('online', () => {
+  if (currentStatus === 'error') {
+    retryButton.click();
+  }
 });
 
 window.requestAnimationFrame(() => {

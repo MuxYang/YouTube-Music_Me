@@ -24,14 +24,14 @@ function getUrl(rawUrl) {
 
 function isGoogleAuthUrl(rawUrl) {
   const url = getUrl(rawUrl);
-  return Boolean(url && (
+  return Boolean(url && url.protocol === 'https:' && (
     url.hostname === 'google.com' || url.hostname.endsWith('.google.com')
   ));
 }
 
 function isYouTubeUrl(rawUrl) {
   const url = getUrl(rawUrl);
-  return Boolean(url && (
+  return Boolean(url && url.protocol === 'https:' && (
     url.hostname === 'youtube.com' || url.hostname.endsWith('.youtube.com')
   ));
 }
@@ -44,7 +44,20 @@ function isYouTubeSignInUrl(rawUrl) {
 }
 
 function isAuthenticationEntryUrl(rawUrl) {
-  return isGoogleAuthUrl(rawUrl) || isYouTubeSignInUrl(rawUrl);
+  return isGoogleAuthUrl(rawUrl) || isYouTubeSignInUrl(rawUrl) || isSignOutUrl(rawUrl);
+}
+
+function isSignOutUrl(rawUrl) {
+  const url = getUrl(rawUrl);
+  return Boolean(url && (isGoogleAuthUrl(rawUrl) || isYouTubeUrl(rawUrl))
+    && /^\/(?:accounts\/)?(?:logout|signout)(?:\/|$)/iu.test(url.pathname));
+}
+
+function isAuthenticationReturnUrl(rawUrl) {
+  const url = getUrl(rawUrl);
+  return Boolean(url && isYouTubeUrl(rawUrl) && !isAuthenticationEntryUrl(rawUrl)
+    && (url.hostname === 'music.youtube.com'
+      || (['www.youtube.com', 'youtube.com'].includes(url.hostname) && url.pathname === '/')));
 }
 
 function isGoogleAccountCookie(cookie) {
@@ -61,8 +74,10 @@ function hasGoogleAccountCookies(cookies) {
 module.exports = {
   hasGoogleAccountCookies,
   isAuthenticationEntryUrl,
+  isAuthenticationReturnUrl,
   isGoogleAccountCookie,
   isGoogleAuthUrl,
+  isSignOutUrl,
   isYouTubeSignInUrl,
   isYouTubeUrl
 };

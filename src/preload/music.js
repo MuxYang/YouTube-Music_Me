@@ -3763,13 +3763,11 @@ function watchPage() {
     childList: true,
     subtree: true
   });
+}
 
-  window.setTimeout(() => {
-    if (!readySent && document.querySelector('ytmusic-app')) {
-      readySent = true;
-      ipcRenderer.send('pwa:ready');
-    }
-  }, 7000);
+window.addEventListener('offline', () => ipcRenderer.send('pwa:load-failed'));
+if (navigator.onLine === false) {
+  ipcRenderer.send('pwa:load-failed');
 }
 
 ipcRenderer.on('window:maximized', (_event, isMaximized) => {
